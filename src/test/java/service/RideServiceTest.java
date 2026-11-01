@@ -159,4 +159,63 @@ class RideServiceTest {
         assertEquals(1, restarted.getRides().size());
         assertEquals("Islam  Rafiqul", restarted.getRide(1).getPassengerName());
     }
+
+    @Test
+    void driverCanAcceptAndShareUpToThreeSeatsPerRickshaw() throws Exception {
+        RideService service = TestApp.start(dir);
+        RideRequest r1 = service.createRequest("Passenger1", PassengerType.STUDENT, "bottola", "dairy_gate", 1);
+        RideRequest r2 = service.createRequest("Passenger2", PassengerType.STAFF, "bottola", "dairy_gate", 2);
+        RideRequest r3 = service.createRequest("Passenger3", PassengerType.STUDENT, "bottola", "dairy_gate", 1);
+
+        Rickshaw rick102 = service.getRickshaw("JU-RICK-102");
+        assertEquals(3, rick102.getAvailableSeats());
+
+        // Driver 102 accepts Ride #1 (1 seat) -> 2 seats remain available
+        service.driverAcceptRide("JU-RICK-102", r1.getId());
+        assertEquals(RideStatus.MATCHED, r1.getStatus());
+        assertEquals(1, rick102.getOccupiedSeats());
+        assertEquals(2, rick102.getAvailableSeats());
+
+        // Driver 102 also accepts Ride #2 (2 seats) -> shared rickshaw now holds 3/3 seats
+        service.driverAcceptRide("JU-RICK-102", r2.getId());
+        assertEquals(RideStatus.MATCHED, r2.getStatus());
+        assertEquals(3, rick102.getOccupiedSeats());
+        assertEquals(0, rick102.getAvailableSeats());
+        assertEquals(2, service.getActiveRidesForRickshaw("JU-RICK-102").size());
+
+        // Driver 102 cannot accept Ride #3 because 0 seats are left
+        assertThrows(IllegalStateException.class, () -> service.driverAcceptRide("JU-RICK-102", r3.getId()));
+        assertEquals(RideStatus.PENDING, r3.getStatus());
+
+        // Completing Ride #1 frees 1 seat, so 2 seats remain occupied by Ride #2
+        service.startRide(r1.getId());
+        service.completeRide(r1.getId());
+        assertEquals(2, rick102.getOccupiedSeats());
+        assertEquals(1, rick102.getAvailableSeats());
+    }
+
+    @Test
+    void driverRejectKeepsRequestPendingAndStepsAlongDijkstraRoute() throws Exception {
+        RideService service = TestApp.start(dir);
+        RideRequest r1 = service.createRequest("Nila", PassengerType.EMERGENCY, "shaheed_minar", "dairy_gate", 1);
+
+        // Driver 101 rejects -> stays PENDING
+        service.driverRejectRide("JU-RICK-101", r1.getId());
+        assertEquals(RideStatus.PENDING, r1.getStatus());
+        assertTrue(r1.isRejectedBy("JU-RICK-101"));
+
+        // Driver 103 (at shaheed_minar) accepts -> steps pickup and moves to destination
+        service.driverAcceptRide("JU-RICK-103", r1.getId());
+        assertEquals(RideStatus.MATCHED, r1.getStatus());
+
+        // Step 1: already at shaheed_minar (pickup), so stepRickshawMovement picks up passenger -> IN_PROGRESS
+        service.stepRickshawMovement("JU-RICK-103");
+        assertEquals(RideStatus.IN_PROGRESS, r1.getStatus());
+
+        // Step 2: moves from shaheed_minar -> dairy_gate and completes ride
+        service.stepRickshawMovement("JU-RICK-103");
+        assertEquals(RideStatus.COMPLETED, r1.getStatus());
+        assertEquals("dairy_gate", service.getRickshaw("JU-RICK-103").getLocationId());
+        assertEquals(3, service.getRickshaw("JU-RICK-103").getAvailableSeats());
+    }
 }

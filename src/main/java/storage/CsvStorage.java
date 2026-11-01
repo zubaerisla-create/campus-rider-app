@@ -104,16 +104,17 @@ public class CsvStorage {
         int skipped = 0;
         for (String[] row : rows(readDataFile(RIDES_FILE))) {
             try {
-                if (row.length != 8) {
+                if (row.length != 8 && row.length != 9) {
                     throw new IllegalArgumentException("wrong number of columns");
                 }
                 int id = Integer.parseInt(row[0]);
                 double distance = Double.parseDouble(row[5]);
-                if (id <= 0 || row[1].isEmpty() || !(distance >= 0)) {
+                int seats = row.length == 9 && !row[8].isEmpty() ? Integer.parseInt(row[8]) : 1;
+                if (id <= 0 || row[1].isEmpty() || !(distance >= 0) || seats < 1 || seats > Rickshaw.DEFAULT_MAX_SEATS) {
                     throw new IllegalArgumentException("invalid value");
                 }
                 rides.add(new RideRequest(id, row[1], PassengerType.valueOf(row[2]), row[3], row[4],
-                        distance, RideStatus.valueOf(row[6]), row[7]));
+                        distance, RideStatus.valueOf(row[6]), row[7], seats));
             } catch (IllegalArgumentException e) { // also covers NumberFormatException
                 skipped++;
             }
@@ -235,9 +236,16 @@ public class CsvStorage {
         List<String> lines = new ArrayList<>();
         lines.add(RIDES_HEADER);
         for (RideRequest r : rides) {
-            lines.add(String.join(",", String.valueOf(r.getId()), r.getPassengerName(),
-                    r.getPassengerType().name(), r.getPickupId(), r.getDestinationId(),
-                    String.valueOf(r.getDistanceMeters()), r.getStatus().name(), r.getRickshawId()));
+            if (r.getSeatsRequested() > 1) {
+                lines.add(String.join(",", String.valueOf(r.getId()), r.getPassengerName(),
+                        r.getPassengerType().name(), r.getPickupId(), r.getDestinationId(),
+                        String.valueOf(r.getDistanceMeters()), r.getStatus().name(), r.getRickshawId(),
+                        String.valueOf(r.getSeatsRequested())));
+            } else {
+                lines.add(String.join(",", String.valueOf(r.getId()), r.getPassengerName(),
+                        r.getPassengerType().name(), r.getPickupId(), r.getDestinationId(),
+                        String.valueOf(r.getDistanceMeters()), r.getStatus().name(), r.getRickshawId()));
+            }
         }
         writeLines(dataDir.resolve(RIDES_FILE), lines);
     }

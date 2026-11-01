@@ -104,4 +104,42 @@ class PanelTest {
             assertTrue(panel.message.isError()); // no ride selected
         });
     }
+
+    @Test
+    void passengerAndDriverPanelsSyncInRealTime() throws Exception {
+        RideService service = TestApp.start(dir);
+        SwingUtilities.invokeAndWait(() -> {
+            PassengerPanel passengerPanel = new PassengerPanel(service);
+            DriverPanel driverPanel = new DriverPanel(service);
+
+            // Passenger requests a 2-seat ride from dairy_gate to shaheed_minar
+            passengerPanel.passengerNameField.setText("Tanvir");
+            passengerPanel.passengerTypeBox.setSelectedItem(PassengerType.EMERGENCY);
+            passengerPanel.seatsBox.setSelectedItem(2);
+            select(passengerPanel.pickupBox, "dairy_gate");
+            select(passengerPanel.destinationBox, "shaheed_minar");
+            passengerPanel.requestRideButton.doClick();
+
+            assertFalse(passengerPanel.message.isError());
+            assertEquals(1, driverPanel.pendingTableModel.getRowCount());
+
+            // Driver JU-RICK-101 (at dairy_gate) accepts the ride from DriverPanel
+            driverPanel.driverSelector.setSelectedItem("JU-RICK-101");
+            driverPanel.acceptRideButton.doClick();
+            assertFalse(driverPanel.message.isError());
+            assertEquals(RideStatus.MATCHED, service.getRide(1).getStatus());
+            assertEquals(1, service.getRickshaw("JU-RICK-101").getAvailableSeats()); // 3 - 2 = 1 seat left
+            assertTrue(passengerPanel.liveTrackingBanner.getText().contains("DRIVER ACCEPTED"));
+
+            // Driver steps GPS twice: 1) Pickup at dairy_gate -> IN_PROGRESS, 2) Arrive at shaheed_minar -> COMPLETED
+            driverPanel.stepGpsButton.doClick();
+            assertEquals(RideStatus.IN_PROGRESS, service.getRide(1).getStatus());
+            assertTrue(passengerPanel.liveTrackingBanner.getText().contains("RIDE IN PROGRESS"));
+
+            driverPanel.stepGpsButton.doClick();
+            assertEquals(RideStatus.COMPLETED, service.getRide(1).getStatus());
+            assertTrue(passengerPanel.liveTrackingBanner.getText().contains("COMPLETED"));
+            assertEquals(3, service.getRickshaw("JU-RICK-101").getAvailableSeats());
+        });
+    }
 }

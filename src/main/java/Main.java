@@ -46,6 +46,7 @@ public class Main {
         SwingUtilities.invokeLater(() -> {
             MainWindow window = new MainWindow(rideService);
             window.setVisible(true);
+            window.openDriverWindowNextToMain();
             if (!warnings.isEmpty()) {
                 JOptionPane.showMessageDialog(window, String.join("\n", warnings),
                         "Data file notes", JOptionPane.WARNING_MESSAGE);

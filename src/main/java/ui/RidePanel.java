@@ -97,6 +97,7 @@ public class RidePanel extends JPanel {
         cancelButton.addActionListener(e -> run(() -> rideService.cancelRide(selectedRideId())));
         policyBox.addActionListener(e -> run(this::changePolicy));
 
+        rideService.addChangeListener(this::refresh);
         refresh();
     }
 

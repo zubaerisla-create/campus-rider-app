@@ -50,7 +50,13 @@ public class RideMatchingService {
         Match best = null;
         for (Rickshaw rickshaw : rickshaws) {
             if (!rickshaw.isAvailable()) {
-                continue; // busy rickshaws never get a second ride
+                continue; // busy rickshaws never get a second ride in exclusive auto-match
+            }
+            if (!rickshaw.hasSeatsFor(request.getSeatsRequested())) {
+                continue;
+            }
+            if (request.isRejectedBy(rickshaw.getId())) {
+                continue;
             }
             RouteResult toPickup = Dijkstra.findShortestPath(graph, rickshaw.getLocationId(), request.getPickupId());
             if (!toPickup.isFound()) {
@@ -65,5 +71,10 @@ public class RideMatchingService {
             }
         }
         return best;
+    }
+
+    /** Computes the Dijkstra route from a rickshaw's current position to a target location. */
+    public RouteResult routeFromRickshaw(Rickshaw rickshaw, String targetLocationId) {
+        return Dijkstra.findShortestPath(graph, rickshaw.getLocationId(), targetLocationId);
     }
 }
