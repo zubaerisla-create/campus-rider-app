@@ -1,9 +1,14 @@
 package service;
 
 import dsa.QueuePolicy;
+import dsa.RickshawSorter;
 import dsa.RideQueue;
+import dsa.RouteCompatibility;
 import dsa.RouteResult;
+import model.DriverAccount;
+import model.PassengerAccount;
 import model.PassengerType;
+import model.RidePassengerRecord;
 import model.RideRequest;
 import model.RideStatus;
 import model.Rickshaw;
@@ -15,6 +20,7 @@ import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -22,12 +28,12 @@ import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * Manages ride requests and rickshaws: create, driver accept/reject, auto-match,
- * multi-passenger seat sharing, live movement tracking, start, complete, cancel.
+ * Manages Passenger & Driver accounts, ride requests, multi-passenger seat sharing,
+ * route compatibility matching, driver accept/reject with automatic fallback to the
+ * next compatible rickshaw, and simulated live GPS tracking.
  *
- * Every successful change is saved to rides.csv and rickshaws.csv right away.
- * Every method returns a message for the user, or throws an exception
- * (IllegalArgumentException / IllegalStateException) with the reason it failed.
+ * Every change is persisted immediately to CSV files in data/:
+ *   passengers.csv, drivers.csv, rickshaws.csv, rides.csv, ride_passengers.csv
  */
 public class RideService {
     private static final DateTimeFormatter TIME_FMT = DateTimeFormatter.ofPattern("HH:mm:ss");
@@ -36,11 +42,17 @@ public class RideService {
     private final RouteService routeService;
     private final RideMatchingService matchingService;
 
-    private final Map<Integer, RideRequest> rides = new LinkedHashMap<>();   // all rides, by id
-    private final Map<String, Rickshaw> rickshaws = new LinkedHashMap<>();   // all rickshaws, by id
+    // HashMap / LinkedHashMap & ArrayList data structures for fast O(1) lookup
+    private final Map<Integer, RideRequest> rides = new LinkedHashMap<>();
+    private final Map<String, Rickshaw> rickshaws = new LinkedHashMap<>();
+    private final Map<String, PassengerAccount> passengersByUsername = new LinkedHashMap<>();
+    private final Map<String, DriverAccount> driversByUsername = new LinkedHashMap<>();
     private final RideQueue pendingQueue = new RideQueue(QueuePolicy.FIFO);
     private final List<String> notifications = new ArrayList<>();
     private final List<Runnable> changeListeners = new CopyOnWriteArrayList<>();
+
+    private PassengerAccount loggedInPassenger;
+    private DriverAccount loggedInDriver;
     private int nextRideId = 1;
 
     public RideService(CsvStorage storage, RouteService routeService) throws IOException {
@@ -48,7 +60,9 @@ public class RideService {
         this.routeService = routeService;
         this.matchingService = new RideMatchingService(routeService.getGraph());
         loadRickshaws();
+        loadAccounts();
         loadRides();
+        saveRidePassengersSnapshot();
     }
 
     // ------------------------------------------------------------- loading
@@ -69,6 +83,23 @@ public class RideService {
         }
     }
 
+    private void loadAccounts() throws IOException {
+        for (PassengerAccount p : storage.loadPassengers()) {
+            passengersByUsername.put(p.getUsername().toLowerCase(Locale.ROOT), p);
+            if (loggedInPassenger == null) {
+                loggedInPassenger = p;
+            }
+        }
+        for (DriverAccount d : storage.loadDrivers()) {
+            if (rickshaws.containsKey(d.getRickshawId())) {
+                driversByUsername.put(d.getUsername().toLowerCase(Locale.ROOT), d);
+                if (loggedInDriver == null) {
+                    loggedInDriver = d;
+                }
+            }
+        }
+    }
+
     /**
      * Loads rides and rebuilds the pending queue. A rickshaw's occupied seats
      * and availability are rebuilt from its MATCHED or IN_PROGRESS rides.
@@ -85,6 +116,7 @@ public class RideService {
             if (ride.getStatus() == RideStatus.PENDING) {
                 ride.setRickshawId("");
                 pendingQueue.add(ride);
+                assignBestOfferIfNeeded(ride);
             }
             if (ride.getStatus().isActive()) {
                 Rickshaw rickshaw = rickshaws.get(ride.getRickshawId());
@@ -115,6 +147,174 @@ public class RideService {
             }
         }
         return null;
+    }
+
+    // ---------------------------------------------------------- Passenger & Driver Accounts
+
+    public List<PassengerAccount> getPassengers() {
+        return Collections.unmodifiableList(new ArrayList<>(passengersByUsername.values()));
+    }
+
+    public List<DriverAccount> getDrivers() {
+        return Collections.unmodifiableList(new ArrayList<>(driversByUsername.values()));
+    }
+
+    public PassengerAccount getLoggedInPassenger() {
+        return loggedInPassenger;
+    }
+
+    public DriverAccount getLoggedInDriver() {
+        return loggedInDriver;
+    }
+
+    public PassengerAccount loginPassenger(String username, String password) {
+        if (username == null || username.isBlank()) {
+            throw new IllegalArgumentException("Please enter your passenger username.");
+        }
+        PassengerAccount account = passengersByUsername.get(username.trim().toLowerCase(Locale.ROOT));
+        if (account == null || !account.getPassword().equals(password == null ? "" : password.trim())) {
+            throw new IllegalArgumentException("Invalid passenger username or password.");
+        }
+        this.loggedInPassenger = account;
+        pushNotification("Passenger logged in: " + account.getFullName() + " (@" + account.getUsername() + ")");
+        notifyListeners();
+        return account;
+    }
+
+    public PassengerAccount registerPassenger(String username, String password,
+                                              String fullName, PassengerType type, String phone) {
+        String u = username == null ? "" : username.replace(',', ' ').trim().toLowerCase(Locale.ROOT);
+        String p = password == null ? "" : password.replace(',', ' ').trim();
+        String name = fullName == null ? "" : fullName.replace(',', ' ').trim();
+        String ph = phone == null ? "" : phone.replace(',', ' ').trim();
+
+        if (u.isEmpty() || p.isEmpty() || name.isEmpty()) {
+            throw new IllegalArgumentException("Username, password, and full name are required.");
+        }
+        if (passengersByUsername.containsKey(u)) {
+            throw new IllegalArgumentException("Username '" + u + "' is already registered.");
+        }
+        String newId = "P-" + (101 + passengersByUsername.size());
+        PassengerAccount created = new PassengerAccount(
+                newId, u, p, name, type == null ? PassengerType.STUDENT : type, ph);
+        passengersByUsername.put(u, created);
+        this.loggedInPassenger = created;
+        try {
+            storage.savePassengers(getPassengers());
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        pushNotification("Registered new Passenger account: " + created.getFullName() + " (@" + u + ")");
+        notifyListeners();
+        return created;
+    }
+
+    public DriverAccount loginDriver(String username, String password) {
+        if (username == null || username.isBlank()) {
+            throw new IllegalArgumentException("Please enter your driver username.");
+        }
+        DriverAccount account = driversByUsername.get(username.trim().toLowerCase(Locale.ROOT));
+        if (account == null || !account.getPassword().equals(password == null ? "" : password.trim())) {
+            throw new IllegalArgumentException("Invalid driver username or password.");
+        }
+        this.loggedInDriver = account;
+        pushNotification("Driver logged in: " + account.getDriverName() + " (" + account.getRickshawId() + ")");
+        notifyListeners();
+        return account;
+    }
+
+    public DriverAccount registerDriver(String username, String password,
+                                        String driverName, String initialLocationId, String phone) {
+        String u = username == null ? "" : username.replace(',', ' ').trim().toLowerCase(Locale.ROOT);
+        String p = password == null ? "" : password.replace(',', ' ').trim();
+        String name = driverName == null ? "" : driverName.replace(',', ' ').trim();
+        String ph = phone == null ? "" : phone.replace(',', ' ').trim();
+
+        if (u.isEmpty() || p.isEmpty() || name.isEmpty()) {
+            throw new IllegalArgumentException("Driver username, password, and name are required.");
+        }
+        if (driversByUsername.containsKey(u)) {
+            throw new IllegalArgumentException("Driver username '" + u + "' is already registered.");
+        }
+        if (!routeService.isValidLocation(initialLocationId)) {
+            throw new IllegalArgumentException("Please choose a valid starting campus location.");
+        }
+
+        int nextNum = 101 + rickshaws.size();
+        String rickshawId = "JU-RICK-" + nextNum;
+        while (rickshaws.containsKey(rickshawId)) {
+            nextNum++;
+            rickshawId = "JU-RICK-" + nextNum;
+        }
+        Rickshaw newRickshaw = new Rickshaw(rickshawId, name, initialLocationId, true);
+        rickshaws.put(rickshawId, newRickshaw);
+
+        String driverId = "D-" + nextNum;
+        DriverAccount created = new DriverAccount(driverId, u, p, name, rickshawId, ph);
+        driversByUsername.put(u, created);
+        this.loggedInDriver = created;
+
+        try {
+            storage.saveRickshaws(getRickshaws());
+            storage.saveDrivers(getDrivers());
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        pushNotification("Registered new Driver " + name + " with Rickshaw " + rickshawId
+                + " at " + routeService.getLocationName(initialLocationId));
+        notifyListeners();
+        return created;
+    }
+
+    public DriverAccount getDriverForRickshaw(String rickshawId) {
+        for (DriverAccount d : driversByUsername.values()) {
+            if (d.getRickshawId().equals(rickshawId)) {
+                return d;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Updates a driver's Rickshaw Current Location, Target Destination, and Available Seats.
+     */
+    public String updateDriverRickshawState(String rickshawId,
+                                            String currentLocationId,
+                                            String targetDestinationId,
+                                            int availableSeats) {
+        Rickshaw rickshaw = rickshaws.get(rickshawId);
+        if (rickshaw == null) {
+            throw new IllegalArgumentException("Unknown rickshaw: " + rickshawId);
+        }
+        if (!routeService.isValidLocation(currentLocationId)) {
+            throw new IllegalArgumentException("Invalid current location.");
+        }
+        if (targetDestinationId != null && !targetDestinationId.isBlank()
+                && !routeService.isValidLocation(targetDestinationId)) {
+            throw new IllegalArgumentException("Invalid target destination.");
+        }
+        if (availableSeats < 0 || availableSeats > rickshaw.getMaxSeats()) {
+            throw new IllegalArgumentException("Available seats must be between 0 and " + rickshaw.getMaxSeats() + ".");
+        }
+
+        rickshaw.setLocationId(currentLocationId);
+        rickshaw.setTargetDestinationId(targetDestinationId == null ? "" : targetDestinationId);
+        rickshaw.setAvailableSeats(availableSeats);
+        save();
+
+        String destText = rickshaw.getTargetDestinationId().isEmpty()
+                ? "Any Campus Location"
+                : routeService.getLocationName(rickshaw.getTargetDestinationId());
+        String msg = String.format(Locale.ROOT,
+                "%s updated: Location = %s | Target = %s | Free Seats = %d/%d",
+                rickshaw.getId(),
+                routeService.getLocationName(currentLocationId),
+                destText,
+                rickshaw.getAvailableSeats(),
+                rickshaw.getMaxSeats());
+        pushNotification(msg);
+        notifyListeners();
+        return msg;
     }
 
     // ---------------------------------------------------------- listeners & notifications
@@ -193,6 +393,31 @@ public class RideService {
         return active;
     }
 
+    public Map<String, List<RideRequest>> getActiveRidesByRickshawMap() {
+        Map<String, List<RideRequest>> map = new HashMap<>();
+        for (Rickshaw r : rickshaws.values()) {
+            map.put(r.getId(), getActiveRidesForRickshaw(r.getId()));
+        }
+        return map;
+    }
+
+    /**
+     * Evaluates and sorts available rickshaws (both idle and seat-sharing) for a
+     * passenger's (pickup -> destination, seats) query using Merge Sort & Route Compatibility.
+     */
+    public List<RouteCompatibility.CompatibilityResult> findSortedCompatibleRickshaws(
+            String pickupId,
+            String destinationId,
+            int seatsNeeded,
+            RickshawSorter.SortCriterion sortCriterion) {
+        if (!routeService.isValidLocation(pickupId) || !routeService.isValidLocation(destinationId)) {
+            return List.of();
+        }
+        return matchingService.findCompatibleRickshawsSorted(
+                pickupId, destinationId, seatsNeeded,
+                getRickshaws(), getActiveRidesByRickshawMap(), sortCriterion);
+    }
+
     /** Recalculates a rickshaw's occupied seats from its active rides. */
     private void syncRickshawSeats(Rickshaw rickshaw) {
         if (rickshaw == null) {
@@ -208,17 +433,40 @@ public class RideService {
         }
     }
 
+    private void assignBestOfferIfNeeded(RideRequest ride) {
+        if (ride.getStatus() != RideStatus.PENDING) {
+            return;
+        }
+        RouteCompatibility.CompatibilityResult best = matchingService.findNextCompatibleRickshawForRequest(
+                ride, getRickshaws(), getActiveRidesByRickshawMap());
+        if (best != null) {
+            ride.setOfferedRickshawId(best.getRickshaw().getId());
+            ride.setDetourMeters(best.getDetourMeters());
+        } else {
+            ride.setOfferedRickshawId("");
+        }
+    }
+
     // ------------------------------------------------------------- actions
 
     /** Creates a PENDING request (1 seat) and adds it to the queue. */
     public RideRequest createRequest(String passengerName, PassengerType type, String pickupId, String destinationId) {
-        return createRequest(passengerName, type, pickupId, destinationId, 1);
+        return createRequest(passengerName, type, pickupId, destinationId, 1, null);
     }
 
     /** Creates a PENDING request with the specified seat count (1 to 3) and adds it to the queue. */
     public RideRequest createRequest(String passengerName, PassengerType type, String pickupId,
                                      String destinationId, int seatsRequested) {
-        // Commas would break the CSV format, so they are replaced with spaces.
+        return createRequest(passengerName, type, pickupId, destinationId, seatsRequested, null);
+    }
+
+    /**
+     * Creates a PENDING request with seat count and optional preferred/selected rickshaw.
+     * If preferredRickshawId is null/blank, the Greedy Route Compatibility matcher automatically
+     * recommends the most suitable compatible rickshaw and forwards the request to it.
+     */
+    public RideRequest createRequest(String passengerName, PassengerType type, String pickupId,
+                                     String destinationId, int seatsRequested, String preferredRickshawId) {
         String name = passengerName == null ? "" : passengerName.replace(',', ' ').trim();
         if (name.isEmpty()) {
             throw new IllegalArgumentException("Please enter the passenger name.");
@@ -242,16 +490,35 @@ public class RideService {
 
         RideRequest ride = new RideRequest(nextRideId, name, type, pickupId, destinationId,
                 route.getTotalDistanceMeters(), RideStatus.PENDING, "", seatsRequested);
+        if (loggedInPassenger != null && loggedInPassenger.getFullName().equalsIgnoreCase(name)) {
+            ride.setPassengerId(loggedInPassenger.getId());
+        }
         nextRideId++;
+
+        if (preferredRickshawId != null && !preferredRickshawId.isBlank() && rickshaws.containsKey(preferredRickshawId)) {
+            Rickshaw pref = rickshaws.get(preferredRickshawId);
+            RouteCompatibility.CompatibilityResult eval = RouteCompatibility.evaluate(
+                    routeService.getGraph(), pref, getActiveRidesForRickshaw(preferredRickshawId),
+                    pickupId, destinationId, seatsRequested);
+            ride.setOfferedRickshawId(preferredRickshawId);
+            ride.setDetourMeters(eval.getDetourMeters());
+        } else {
+            assignBestOfferIfNeeded(ride);
+        }
+
         rides.put(ride.getId(), ride);
         pendingQueue.add(ride);
         save();
+
+        String offerInfo = ride.getOfferedRickshawId().isEmpty()
+                ? "Queued for next free rickshaw"
+                : "Sent to best match: " + ride.getOfferedRickshawId();
         pushNotification(String.format(Locale.ROOT,
-                "New Request #%d: %s (%s, %d seat%s) from %s to %s (%.0f m)",
+                "New Request #%d: %s (%s, %d seat%s) %s -> %s (%.0f m) [%s]",
                 ride.getId(), ride.getPassengerName(), ride.getPassengerType(),
                 ride.getSeatsRequested(), ride.getSeatsRequested() > 1 ? "s" : "",
                 routeService.getLocationName(pickupId), routeService.getLocationName(destinationId),
-                ride.getDistanceMeters()));
+                ride.getDistanceMeters(), offerInfo));
         notifyListeners();
         return ride;
     }
@@ -276,6 +543,7 @@ public class RideService {
         Rickshaw rickshaw = match.getRickshaw();
         next.moveTo(RideStatus.MATCHED);
         next.setRickshawId(rickshaw.getId());
+        next.setOfferedRickshawId(rickshaw.getId());
         syncRickshawSeats(rickshaw);
         save();
         String msg = String.format(Locale.ROOT, "Request #%d (%s) matched with %s (%s), %.1f m from the pickup.",
@@ -288,7 +556,8 @@ public class RideService {
 
     /**
      * Driver App action: a specific driver accepts a PENDING ride request.
-     * Supports shared rides up to the rickshaw's maximum seat capacity (3 seats).
+     * Supports shared rides up to the rickshaw's maximum seat capacity (3 seats)
+     * and records the route compatibility detour in ride_passengers.csv.
      */
     public String driverAcceptRide(String rickshawId, int rideId) {
         Rickshaw rickshaw = rickshaws.get(rickshawId);
@@ -305,6 +574,12 @@ public class RideService {
                     rickshaw.getId(), rickshaw.getAvailableSeats(), rickshaw.getMaxSeats(),
                     rideId, ride.getSeatsRequested()));
         }
+
+        List<RideRequest> existingActive = getActiveRidesForRickshaw(rickshawId);
+        RouteCompatibility.CompatibilityResult compat = RouteCompatibility.evaluate(
+                routeService.getGraph(), rickshaw, existingActive,
+                ride.getPickupId(), ride.getDestinationId(), ride.getSeatsRequested());
+
         RouteResult toPickup = matchingService.routeFromRickshaw(rickshaw, ride.getPickupId());
         if (!toPickup.isFound()) {
             throw new IllegalStateException("No road route from " + rickshaw.getLocationId() + " to pickup.");
@@ -313,11 +588,14 @@ public class RideService {
         pendingQueue.remove(ride);
         ride.moveTo(RideStatus.MATCHED);
         ride.setRickshawId(rickshaw.getId());
+        ride.setOfferedRickshawId(rickshaw.getId());
+        ride.setDetourMeters(compat.getDetourMeters());
         syncRickshawSeats(rickshaw);
         save();
 
         String sharedNote = getActiveRidesForRickshaw(rickshawId).size() > 1
-                ? " [Shared Ride: " + rickshaw.getOccupiedSeats() + "/" + rickshaw.getMaxSeats() + " seats occupied]"
+                ? String.format(Locale.ROOT, " [Shared Ride: %d/%d seats occupied, +%.0fm route detour]",
+                        rickshaw.getOccupiedSeats(), rickshaw.getMaxSeats(), compat.getDetourMeters())
                 : "";
         String msg = String.format(Locale.ROOT,
                 "Driver %s (%s) accepted Ride #%d for %s! Distance to pickup (%s): %.1f m.%s",
@@ -330,7 +608,8 @@ public class RideService {
 
     /**
      * Driver App action: a specific driver rejects/passes on a PENDING ride request.
-     * The request stays PENDING in the queue so other drivers can accept it.
+     * Automatically finds the NEXT most compatible rickshaw using the Greedy Route
+     * Compatibility algorithm and forwards the request to that driver!
      */
     public String driverRejectRide(String rickshawId, int rideId) {
         Rickshaw rickshaw = rickshaws.get(rickshawId);
@@ -342,9 +621,28 @@ public class RideService {
             throw new IllegalStateException("Ride #" + rideId + " is not pending.");
         }
         ride.addRejectedBy(rickshawId);
+
+        // Automatically find the next best compatible rickshaw
+        RouteCompatibility.CompatibilityResult nextBest = matchingService.findNextCompatibleRickshawForRequest(
+                ride, getRickshaws(), getActiveRidesByRickshawMap());
+        String fallbackNote;
+        if (nextBest != null) {
+            ride.setOfferedRickshawId(nextBest.getRickshaw().getId());
+            ride.setDetourMeters(nextBest.getDetourMeters());
+            fallbackNote = String.format(Locale.ROOT,
+                    "Forwarded to next compatible rickshaw: %s (%s, %.0fm to pickup).",
+                    nextBest.getRickshaw().getId(),
+                    nextBest.getRickshaw().getDriverName(),
+                    nextBest.getDistanceToPickupMeters());
+        } else {
+            ride.setOfferedRickshawId("");
+            fallbackNote = "Waiting in queue for another rickshaw to become available.";
+        }
+
+        save();
         String msg = String.format(Locale.ROOT,
-                "Driver %s (%s) declined Ride #%d (%s). Waiting for another rickshaw.",
-                rickshaw.getDriverName(), rickshaw.getId(), ride.getId(), ride.getPassengerName());
+                "Driver %s (%s) declined Ride #%d (%s). %s",
+                rickshaw.getDriverName(), rickshaw.getId(), ride.getId(), ride.getPassengerName(), fallbackNote);
         pushNotification(msg);
         notifyListeners();
         return msg;
@@ -451,7 +749,7 @@ public class RideService {
 
     /**
      * Advances a rickshaw by one road segment or action along its active ride path.
-     * Used by the Driver's "Move Next Stop" button and the Live GPS Simulation timer.
+     * Used by the Driver's "Move Rickshaw" button and the Live GPS Simulation timer.
      */
     public String stepRickshawMovement(String rickshawId) {
         Rickshaw rickshaw = rickshaws.get(rickshawId);
@@ -530,7 +828,6 @@ public class RideService {
 
         List<String> path = getPlannedPathForRickshaw(rickshawId);
         if (path.size() < 2) {
-            // At pickup or destination already
             stepRickshawMovement(rickshawId);
             return true;
         }
@@ -564,10 +861,24 @@ public class RideService {
         try {
             storage.saveRides(getRides());
             storage.saveRickshaws(getRickshaws());
+            saveRidePassengersSnapshot();
         } catch (IOException e) {
             throw new UncheckedIOException("The change was made but could not be saved to "
                     + storage.getDataDir() + ": " + e.getMessage(), e);
         }
+    }
+
+    private void saveRidePassengersSnapshot() throws IOException {
+        List<RidePassengerRecord> records = new ArrayList<>();
+        for (RideRequest r : rides.values()) {
+            String pId = r.getPassengerId().isEmpty() ? "P-GUEST" : r.getPassengerId();
+            String rId = r.getRickshawId().isEmpty() ? r.getOfferedRickshawId() : r.getRickshawId();
+            records.add(new RidePassengerRecord(
+                    r.getId(), pId, r.getPassengerName(), rId,
+                    r.getPickupId(), r.getDestinationId(),
+                    r.getSeatsRequested(), r.getDetourMeters(), r.getStatus()));
+        }
+        storage.saveRidePassengers(records);
     }
 
     /** Count of rickshaws that are completely free right now. */

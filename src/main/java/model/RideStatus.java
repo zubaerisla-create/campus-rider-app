@@ -1,9 +1,9 @@
 package model;
 
 /**
- * Ride lifecycle:
- * PENDING -> MATCHED -> IN_PROGRESS -> COMPLETED
- * PENDING or MATCHED -> CANCELLED
+ * Ride lifecycle state machine:
+ * PENDING (Pending) -> MATCHED (Accepted) -> IN_PROGRESS (Started) -> COMPLETED (Completed)
+ * PENDING or MATCHED -> CANCELLED (Cancelled)
  */
 public enum RideStatus {
     PENDING,
@@ -28,5 +28,23 @@ public enum RideStatus {
     /** True while the ride is holding a rickshaw. */
     public boolean isActive() {
         return this == MATCHED || this == IN_PROGRESS;
+    }
+
+    /** User-friendly lifecycle label: Pending -> Accepted -> Started -> Completed. */
+    public String getDisplayLabel() {
+        switch (this) {
+            case PENDING:
+                return "Pending";
+            case MATCHED:
+                return "Accepted (Matched)";
+            case IN_PROGRESS:
+                return "Started (In Progress)";
+            case COMPLETED:
+                return "Completed";
+            case CANCELLED:
+                return "Cancelled";
+            default:
+                return name();
+        }
     }
 }

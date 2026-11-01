@@ -1,7 +1,10 @@
 package ui;
 
+import dsa.RickshawSorter;
+import dsa.RouteCompatibility;
 import dsa.RouteResult;
 import model.Location;
+import model.PassengerAccount;
 import model.PassengerType;
 import model.RideRequest;
 import model.RideStatus;
@@ -15,7 +18,9 @@ import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JList;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JPasswordField;
 import javax.swing.JProgressBar;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
@@ -33,26 +38,40 @@ import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
+import java.awt.GridLayout;
 import java.awt.Insets;
 import java.util.List;
 import java.util.Locale;
 
 /**
- * Passenger Application View:
- * - Trie location search + Pickup/Destination selection
+ * Passenger Dashboard:
+ * - Passenger Account Registration & Login (saved in data/passengers.csv)
+ * - Trie Location Search + Pickup & Destination selection
  * - Seat selection (1, 2, or 3 seats for shared rickshaw rides)
- * - Live Tracking status banner + progress bar (approaching pickup / in progress / completed)
- * - 2D Live Campus Map Canvas showing shortest route & live rickshaw positions
+ * - Available & Compatible Rickshaws table sorted via Merge Sort (Distance / Compatibility / Free Seats)
+ * - Send Request to Best Compatible Rickshaw or Selected Rickshaw
+ * - Simulated Live Tracking Banner + Progress Bar + 2D Campus Map
  */
 public class PassengerPanel extends JPanel {
+    private static final String[] AVAILABLE_RICKSHAWS_COLUMNS = {
+            "Rickshaw", "Driver", "At Location", "Free Seats", "To Pickup (m)", "Detour (m)", "Route Compatibility"
+    };
     private static final String[] MY_RIDES_COLUMNS = {
-            "Ride #", "Passenger", "Priority", "Seats", "Pickup", "Destination", "Dist (m)", "Status", "Driver / Rickshaw"
+            "Ride #", "Passenger", "Priority", "Seats", "Pickup", "Destination", "Dist (m)", "Status", "Rickshaw / Offer"
     };
 
     private final RideService rideService;
     private final RouteService routeService;
 
-    // Package-private for testing
+    // Account login / registration controls
+    final JComboBox<PassengerAccount> accountSelectorBox = new JComboBox<>();
+    final JTextField loginUserField = new JTextField(8);
+    final JPasswordField loginPassField = new JPasswordField(6);
+    final JButton loginButton = new JButton("Login");
+    final JButton registerButton = new JButton("Register Passenger");
+    final JLabel loggedInBadge = new JLabel("Logged in: Guest");
+
+    // Booking form controls (package-private for testing)
     final JTextField passengerNameField = new JTextField(14);
     final JComboBox<PassengerType> passengerTypeBox = new JComboBox<>(PassengerType.values());
     final JComboBox<Integer> seatsBox = new JComboBox<>(new Integer[]{1, 2, 3});
@@ -64,8 +83,21 @@ public class PassengerPanel extends JPanel {
     final JButton setPickupBtn = new JButton("Set Pickup");
     final JButton setDestBtn = new JButton("Set Dest");
     final JLabel routePreviewLabel = new JLabel("Route distance: --");
-    final JButton requestRideButton = new JButton("Request Ride Now");
+    final JButton requestRideButton = new JButton("Request Ride (Auto Best Match)");
+    final JButton requestSelectedRickshawButton = new JButton("Send Request to Selected Rickshaw");
     final JButton cancelRideButton = new JButton("Cancel Selected Ride");
+
+    // Available Rickshaws sorting & table
+    final JComboBox<RickshawSorter.SortCriterion> sortCriterionBox =
+            new JComboBox<>(RickshawSorter.SortCriterion.values());
+    final JButton findNearbyButton = new JButton("Find Nearby Rickshaws");
+    final DefaultTableModel availableRickshawsModel = new DefaultTableModel(AVAILABLE_RICKSHAWS_COLUMNS, 0) {
+        @Override
+        public boolean isCellEditable(int row, int column) {
+            return false;
+        }
+    };
+    final JTable availableRickshawsTable = new JTable(availableRickshawsModel);
 
     // Live tracking components
     final JLabel liveTrackingBanner = new JLabel("No active ride selected. Create or select a ride to track live.");
@@ -81,12 +113,14 @@ public class PassengerPanel extends JPanel {
     final DefaultListModel<String> notificationModel = new DefaultListModel<>();
     final MessageLabel message = new MessageLabel();
 
+    private boolean syncingAccountBox = false;
+
     public PassengerPanel(RideService rideService) {
-        super(new BorderLayout(8, 8));
+        super(new BorderLayout(6, 6));
         this.rideService = rideService;
         this.routeService = rideService.getRouteService();
         this.mapCanvas = new CampusMapCanvas(rideService);
-        setBorder(BorderFactory.createEmptyBorder(8, 8, 8, 8));
+        setBorder(BorderFactory.createEmptyBorder(6, 8, 6, 8));
 
         Location[] locations = routeService.getLocationsSorted().toArray(new Location[0]);
         pickupBox = new JComboBox<>(locations);
@@ -95,10 +129,17 @@ public class PassengerPanel extends JPanel {
             destinationBox.setSelectedIndex(1);
         }
 
-        JSplitPane mainSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, buildLeftBookingPanel(), buildRightTrackingPanel());
-        mainSplit.setResizeWeight(0.36);
+        PassengerAccount initial = rideService.getLoggedInPassenger();
+        if (initial != null) {
+            passengerNameField.setText(initial.getFullName());
+            passengerTypeBox.setSelectedItem(initial.getPassengerType());
+        }
 
-        add(buildLiveStatusHeader(), BorderLayout.NORTH);
+        JSplitPane mainSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
+                buildLeftBookingPanel(), buildRightTrackingPanel());
+        mainSplit.setResizeWeight(0.37);
+
+        add(buildNorthContainer(), BorderLayout.NORTH);
         add(mainSplit, BorderLayout.CENTER);
         add(message, BorderLayout.SOUTH);
 
@@ -108,11 +149,50 @@ public class PassengerPanel extends JPanel {
         refresh();
     }
 
+    private JPanel buildNorthContainer() {
+        JPanel north = new JPanel(new BorderLayout(4, 4));
+        north.add(buildAccountHeader(), BorderLayout.NORTH);
+        north.add(buildLiveStatusHeader(), BorderLayout.SOUTH);
+        return north;
+    }
+
+    private JPanel buildAccountHeader() {
+        JPanel bar = new JPanel(new BorderLayout(6, 2));
+        bar.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(new Color(142, 68, 173), 1, true),
+                BorderFactory.createEmptyBorder(4, 8, 4, 8)
+        ));
+        bar.setBackground(new Color(245, 238, 248));
+
+        JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        left.setOpaque(false);
+        left.add(new JLabel("Passenger Account:"));
+        left.add(accountSelectorBox);
+        loggedInBadge.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 12));
+        loggedInBadge.setForeground(new Color(91, 44, 111));
+        left.add(loggedInBadge);
+
+        JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+        right.setOpaque(false);
+        right.add(new JLabel("User:"));
+        loginUserField.setText("tanvir");
+        loginPassField.setText("1234");
+        right.add(loginUserField);
+        right.add(new JLabel("Pass:"));
+        right.add(loginPassField);
+        right.add(loginButton);
+        right.add(registerButton);
+
+        bar.add(left, BorderLayout.WEST);
+        bar.add(right, BorderLayout.EAST);
+        return bar;
+    }
+
     private JPanel buildLiveStatusHeader() {
         JPanel panel = new JPanel(new BorderLayout(6, 4));
         panel.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(new Color(41, 128, 185), 1, true),
-                BorderFactory.createEmptyBorder(6, 10, 6, 10)
+                BorderFactory.createEmptyBorder(5, 10, 5, 10)
         ));
         panel.setBackground(new Color(235, 245, 251));
 
@@ -130,11 +210,11 @@ public class PassengerPanel extends JPanel {
 
     private JPanel buildLeftBookingPanel() {
         JPanel left = new JPanel(new BorderLayout(6, 6));
-        left.setPreferredSize(new Dimension(370, 560));
+        left.setPreferredSize(new Dimension(390, 560));
 
         // 1. Booking Form
         JPanel form = new JPanel(new GridBagLayout());
-        form.setBorder(BorderFactory.createTitledBorder("1. Book a Campus Rickshaw (Passenger)"));
+        form.setBorder(BorderFactory.createTitledBorder("1. Book a Campus Rickshaw (Seat Sharing & Route Match)"));
         GridBagConstraints c = new GridBagConstraints();
         c.insets = new Insets(3, 5, 3, 5);
         c.anchor = GridBagConstraints.WEST;
@@ -154,18 +234,21 @@ public class PassengerPanel extends JPanel {
         form.add(routePreviewLabel, c);
 
         c.gridy = 6;
-        requestRideButton.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 13));
+        requestRideButton.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 12));
         form.add(requestRideButton, c);
+
+        c.gridy = 7;
+        form.add(requestSelectedRickshawButton, c);
 
         // 2. Quick Trie Search Box
         JPanel triePanel = new JPanel(new BorderLayout(4, 4));
-        triePanel.setBorder(BorderFactory.createTitledBorder("Quick Location Search (Trie)"));
+        triePanel.setBorder(BorderFactory.createTitledBorder("Quick Location Search (Trie Prefix Tree)"));
         JPanel searchRow = new JPanel(new BorderLayout(4, 4));
         searchRow.add(new JLabel("Type keyword/alias: "), BorderLayout.WEST);
         searchRow.add(searchField, BorderLayout.CENTER);
         triePanel.add(searchRow, BorderLayout.NORTH);
 
-        trieMatchesList.setVisibleRowCount(4);
+        trieMatchesList.setVisibleRowCount(3);
         trieMatchesList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         triePanel.add(new JScrollPane(trieMatchesList), BorderLayout.CENTER);
 
@@ -176,7 +259,7 @@ public class PassengerPanel extends JPanel {
 
         // 3. Live Notification Feed
         JPanel notifPanel = new JPanel(new BorderLayout(4, 4));
-        notifPanel.setBorder(BorderFactory.createTitledBorder("Live Passenger Notifications"));
+        notifPanel.setBorder(BorderFactory.createTitledBorder("Live Passenger & Matching Events"));
         JList<String> notifList = new JList<>(notificationModel);
         notifList.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 11));
         notifPanel.add(new JScrollPane(notifList), BorderLayout.CENTER);
@@ -193,24 +276,43 @@ public class PassengerPanel extends JPanel {
         JPanel right = new JPanel(new BorderLayout(6, 6));
 
         JPanel mapWrapper = new JPanel(new BorderLayout());
-        mapWrapper.setBorder(BorderFactory.createTitledBorder("2. Live Rickshaw GPS & Dijkstra Shortest Route Map"));
+        mapWrapper.setBorder(BorderFactory.createTitledBorder("2. Simulated Live GPS Tracking & Dijkstra Shortest Route Map"));
         mapWrapper.add(mapCanvas, BorderLayout.CENTER);
 
+        // Available Rickshaws panel (with Merge Sort options)
+        JPanel rickshawsWrapper = new JPanel(new BorderLayout(4, 4));
+        rickshawsWrapper.setBorder(BorderFactory.createTitledBorder(
+                "3. Available Rickshaws with Free Seats (Sorted via Merge Sort & Route Compatibility)"));
+        JPanel sortBar = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        sortBar.add(new JLabel("Sort Available Rickshaws by:"));
+        sortBar.add(sortCriterionBox);
+        sortBar.add(findNearbyButton);
+        availableRickshawsTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        JScrollPane availScroll = new JScrollPane(availableRickshawsTable);
+        availScroll.setPreferredSize(new Dimension(500, 105));
+        rickshawsWrapper.add(sortBar, BorderLayout.NORTH);
+        rickshawsWrapper.add(availScroll, BorderLayout.CENTER);
+
+        // My Rides table
         JPanel ridesWrapper = new JPanel(new BorderLayout(4, 4));
-        ridesWrapper.setBorder(BorderFactory.createTitledBorder("3. My Ride Requests & Live Status"));
+        ridesWrapper.setBorder(BorderFactory.createTitledBorder(
+                "4. Ride Requests & Lifecycle (Pending -> Accepted -> Started -> Completed)"));
         ridesTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         JScrollPane tableScroll = new JScrollPane(ridesTable);
-        tableScroll.setPreferredSize(new Dimension(500, 150));
+        tableScroll.setPreferredSize(new Dimension(500, 115));
 
         JPanel actionRow = new JPanel(new FlowLayout(FlowLayout.LEFT));
         actionRow.add(cancelRideButton);
-        actionRow.add(new JLabel("  (Tip: Select any ride in the table to track its Rickshaw & Route on the map)"));
+        actionRow.add(new JLabel("  (Select a ride to see live Rickshaw movement on the map)"));
 
         ridesWrapper.add(tableScroll, BorderLayout.CENTER);
         ridesWrapper.add(actionRow, BorderLayout.SOUTH);
 
-        JSplitPane verticalSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, mapWrapper, ridesWrapper);
-        verticalSplit.setResizeWeight(0.68);
+        JSplitPane tablesSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, rickshawsWrapper, ridesWrapper);
+        tablesSplit.setResizeWeight(0.48);
+
+        JSplitPane verticalSplit = new JSplitPane(JSplitPane.VERTICAL_SPLIT, mapWrapper, tablesSplit);
+        verticalSplit.setResizeWeight(0.55);
         right.add(verticalSplit, BorderLayout.CENTER);
         return right;
     }
@@ -227,8 +329,49 @@ public class PassengerPanel extends JPanel {
     }
 
     private void wireEvents() {
-        pickupBox.addActionListener(e -> updateRoutePreview());
-        destinationBox.addActionListener(e -> updateRoutePreview());
+        accountSelectorBox.addActionListener(e -> {
+            if (syncingAccountBox) {
+                return;
+            }
+            PassengerAccount selected = (PassengerAccount) accountSelectorBox.getSelectedItem();
+            if (selected != null) {
+                loginUserField.setText(selected.getUsername());
+                loginPassField.setText(selected.getPassword());
+                rideService.loginPassenger(selected.getUsername(), selected.getPassword());
+                passengerNameField.setText(selected.getFullName());
+                passengerTypeBox.setSelectedItem(selected.getPassengerType());
+                message.showSuccess("Switched to Passenger account: " + selected.getFullName());
+            }
+        });
+
+        loginButton.addActionListener(e -> {
+            try {
+                PassengerAccount acc = rideService.loginPassenger(
+                        loginUserField.getText(), new String(loginPassField.getPassword()));
+                passengerNameField.setText(acc.getFullName());
+                passengerTypeBox.setSelectedItem(acc.getPassengerType());
+                message.showSuccess("Logged in as " + acc.getFullName() + " (" + acc.getPassengerType() + ").");
+            } catch (RuntimeException ex) {
+                message.showError(ex.getMessage());
+            }
+        });
+
+        registerButton.addActionListener(e -> showRegisterPassengerDialog());
+
+        pickupBox.addActionListener(e -> {
+            updateRoutePreview();
+            refreshAvailableRickshawsTable();
+        });
+        destinationBox.addActionListener(e -> {
+            updateRoutePreview();
+            refreshAvailableRickshawsTable();
+        });
+        seatsBox.addActionListener(e -> refreshAvailableRickshawsTable());
+        sortCriterionBox.addActionListener(e -> refreshAvailableRickshawsTable());
+        findNearbyButton.addActionListener(e -> {
+            refreshAvailableRickshawsTable();
+            message.showSuccess("Sorted available rickshaws using Merge Sort (" + sortCriterionBox.getSelectedItem() + ").");
+        });
 
         searchField.getDocument().addDocumentListener(new DocumentListener() {
             public void insertUpdate(DocumentEvent e) {
@@ -264,7 +407,16 @@ public class PassengerPanel extends JPanel {
             }
         });
 
-        requestRideButton.addActionListener(e -> createPassengerRide());
+        requestRideButton.addActionListener(e -> createPassengerRide(null));
+        requestSelectedRickshawButton.addActionListener(e -> {
+            int row = availableRickshawsTable.getSelectedRow();
+            if (row < 0) {
+                message.showError("Select an available rickshaw from Table 3 first, or use 'Request Ride (Auto Best Match)'.");
+                return;
+            }
+            String rickshawId = (String) availableRickshawsModel.getValueAt(row, 0);
+            createPassengerRide(rickshawId);
+        });
         cancelRideButton.addActionListener(e -> cancelSelectedRide());
 
         ridesTable.getSelectionModel().addListSelectionListener(e -> {
@@ -272,6 +424,46 @@ public class PassengerPanel extends JPanel {
                 updateLiveTrackingForSelectedRide();
             }
         });
+    }
+
+    private void showRegisterPassengerDialog() {
+        JTextField uField = new JTextField(12);
+        JPasswordField pField = new JPasswordField("1234", 12);
+        JTextField nameField = new JTextField(14);
+        JComboBox<PassengerType> typeField = new JComboBox<>(PassengerType.values());
+        JTextField phoneField = new JTextField("017", 12);
+
+        JPanel panel = new JPanel(new GridLayout(0, 2, 6, 6));
+        panel.add(new JLabel("Username:"));
+        panel.add(uField);
+        panel.add(new JLabel("Password:"));
+        panel.add(pField);
+        panel.add(new JLabel("Full Name:"));
+        panel.add(nameField);
+        panel.add(new JLabel("Passenger Type:"));
+        panel.add(typeField);
+        panel.add(new JLabel("Phone:"));
+        panel.add(phoneField);
+
+        int res = JOptionPane.showConfirmDialog(this, panel,
+                "Register New Passenger Account (Saved to passengers.csv)",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (res == JOptionPane.OK_OPTION) {
+            try {
+                PassengerAccount created = rideService.registerPassenger(
+                        uField.getText(),
+                        new String(pField.getPassword()),
+                        nameField.getText(),
+                        (PassengerType) typeField.getSelectedItem(),
+                        phoneField.getText()
+                );
+                passengerNameField.setText(created.getFullName());
+                passengerTypeBox.setSelectedItem(created.getPassengerType());
+                message.showSuccess("Registered & logged in as " + created.getFullName() + " (@" + created.getUsername() + ").");
+            } catch (RuntimeException ex) {
+                message.showError(ex.getMessage());
+            }
+        }
     }
 
     private void updateTrieSearch() {
@@ -309,23 +501,58 @@ public class PassengerPanel extends JPanel {
         }
     }
 
-    private void createPassengerRide() {
+    private void refreshAvailableRickshawsTable() {
+        Location from = (Location) pickupBox.getSelectedItem();
+        Location to = (Location) destinationBox.getSelectedItem();
+        Integer seats = (Integer) seatsBox.getSelectedItem();
+        RickshawSorter.SortCriterion sort = (RickshawSorter.SortCriterion) sortCriterionBox.getSelectedItem();
+        if (from == null || to == null || seats == null) {
+            return;
+        }
+        availableRickshawsModel.setRowCount(0);
+        List<RouteCompatibility.CompatibilityResult> sorted = rideService.findSortedCompatibleRickshaws(
+                from.getId(), to.getId(), seats, sort);
+        for (RouteCompatibility.CompatibilityResult item : sorted) {
+            Rickshaw r = item.getRickshaw();
+            availableRickshawsModel.addRow(new Object[]{
+                    r.getId(),
+                    r.getDriverName(),
+                    routeService.getLocationName(r.getLocationId()),
+                    r.getAvailableSeats() + "/" + r.getMaxSeats() + " free",
+                    Double.isInfinite(item.getDistanceToPickupMeters()) ? "N/A"
+                            : String.format(Locale.ROOT, "%.1f", item.getDistanceToPickupMeters()),
+                    Double.isInfinite(item.getDetourMeters()) ? "N/A"
+                            : String.format(Locale.ROOT, "+%.0f", item.getDetourMeters()),
+                    item.getSummary()
+            });
+        }
+        if (availableRickshawsModel.getRowCount() > 0 && availableRickshawsTable.getSelectedRow() < 0) {
+            availableRickshawsTable.setRowSelectionInterval(0, 0);
+        }
+    }
+
+    private void createPassengerRide(String preferredRickshawId) {
         try {
             Location pickup = (Location) pickupBox.getSelectedItem();
             Location dest = (Location) destinationBox.getSelectedItem();
             int seats = (Integer) seatsBox.getSelectedItem();
+            String name = passengerNameField.getText();
             RideRequest created = rideService.createRequest(
-                    passengerNameField.getText(),
+                    name,
                     (PassengerType) passengerTypeBox.getSelectedItem(),
                     pickup == null ? null : pickup.getId(),
                     dest == null ? null : dest.getId(),
-                    seats
+                    seats,
+                    preferredRickshawId
             );
             passengerNameField.setText("");
+            String targetNote = created.getOfferedRickshawId().isEmpty()
+                    ? "Queued for next available rickshaw"
+                    : "Sent to " + created.getOfferedRickshawId();
             message.showSuccess(String.format(Locale.ROOT,
-                    "Ride #%d requested (%d seat%s, %.1f m)! Waiting for a Driver to accept.",
+                    "Ride #%d requested (%d seat%s, %.1f m)! %s.",
                     created.getId(), created.getSeatsRequested(),
-                    created.getSeatsRequested() > 1 ? "s" : "", created.getDistanceMeters()));
+                    created.getSeatsRequested() > 1 ? "s" : "", created.getDistanceMeters(), targetNote));
             selectRideInTable(created.getId());
         } catch (RuntimeException ex) {
             message.showError(ex.getMessage());
@@ -378,15 +605,19 @@ public class PassengerPanel extends JPanel {
 
         RouteResult tripRoute = routeService.findRoute(ride.getPickupId(), ride.getDestinationId());
         mapCanvas.setHighlightedRoute(tripRoute.getPath(), ride.getPickupId(), ride.getDestinationId());
-        mapCanvas.setHighlightedRickshawId(ride.getRickshawId().isEmpty() ? null : ride.getRickshawId());
+        String trackRickshawId = !ride.getRickshawId().isEmpty() ? ride.getRickshawId() : ride.getOfferedRickshawId();
+        mapCanvas.setHighlightedRickshawId(trackRickshawId.isEmpty() ? null : trackRickshawId);
 
         if (ride.getStatus() == RideStatus.PENDING) {
             mapCanvas.setApproachRoute(List.of());
+            String offerText = ride.getOfferedRickshawId().isEmpty()
+                    ? "Waiting for any free Rickshaw"
+                    : "Offered to " + ride.getOfferedRickshawId() + " (Waiting for Driver Accept)";
             liveTrackingBanner.setText(String.format(Locale.ROOT,
-                    "Ride #%d (%s, %d seat): PENDING — Waiting for Driver to Accept...",
-                    ride.getId(), ride.getPassengerName(), ride.getSeatsRequested()));
+                    "Ride #%d (%s, %d seat): PENDING — %s",
+                    ride.getId(), ride.getPassengerName(), ride.getSeatsRequested(), offerText));
             rideProgressBar.setValue(15);
-            rideProgressBar.setString("Waiting for Driver...");
+            rideProgressBar.setString("Pending...");
         } else if (ride.getStatus() == RideStatus.MATCHED) {
             Rickshaw r = rideService.getRickshaw(ride.getRickshawId());
             RouteResult approach = r != null
@@ -400,7 +631,7 @@ public class PassengerPanel extends JPanel {
                     r != null ? r.getDriverName() : "", ride.getRickshawId(),
                     locName, distToPickup, routeService.getLocationName(ride.getPickupId())));
             rideProgressBar.setValue(45);
-            rideProgressBar.setString(distToPickup == 0 ? "At Pickup!" : String.format(Locale.ROOT, "Approaching (%.0fm)", distToPickup));
+            rideProgressBar.setString(distToPickup == 0 ? "At Pickup!" : String.format(Locale.ROOT, "Accepted (%.0fm)", distToPickup));
         } else if (ride.getStatus() == RideStatus.IN_PROGRESS) {
             mapCanvas.setApproachRoute(List.of());
             Rickshaw r = rideService.getRickshaw(ride.getRickshawId());
@@ -413,11 +644,11 @@ public class PassengerPanel extends JPanel {
                     : 75;
             String locName = r != null ? routeService.getLocationName(r.getLocationId()) : "";
             liveTrackingBanner.setText(String.format(Locale.ROOT,
-                    "RIDE IN PROGRESS: %s is at %s -> Heading to %s (%.0f m remaining)",
+                    "RIDE IN PROGRESS (Started): %s is at %s -> Heading to %s (%.0f m remaining)",
                     ride.getRickshawId(), locName,
                     routeService.getLocationName(ride.getDestinationId()), remDist));
             rideProgressBar.setValue(Math.min(95, Math.max(50, pct)));
-            rideProgressBar.setString("On Trip (" + Math.min(95, Math.max(50, pct)) + "%)");
+            rideProgressBar.setString("Started (" + Math.min(95, Math.max(50, pct)) + "%)");
         } else if (ride.getStatus() == RideStatus.COMPLETED) {
             mapCanvas.setApproachRoute(List.of());
             liveTrackingBanner.setText(String.format(Locale.ROOT,
@@ -434,6 +665,25 @@ public class PassengerPanel extends JPanel {
     }
 
     public void refresh() {
+        syncingAccountBox = true;
+        try {
+            accountSelectorBox.removeAllItems();
+            for (PassengerAccount p : rideService.getPassengers()) {
+                accountSelectorBox.addItem(p);
+            }
+            PassengerAccount current = rideService.getLoggedInPassenger();
+            if (current != null) {
+                accountSelectorBox.setSelectedItem(current);
+                loggedInBadge.setText("Active: " + current.getFullName() + " (" + current.getPassengerType() + ")");
+            } else {
+                loggedInBadge.setText("Active: Guest");
+            }
+        } finally {
+            syncingAccountBox = false;
+        }
+
+        refreshAvailableRickshawsTable();
+
         Integer selectedRideId = null;
         if (ridesTable.getSelectedRow() >= 0) {
             selectedRideId = (Integer) ridesTableModel.getValueAt(ridesTable.getSelectedRow(), 0);
@@ -442,7 +692,14 @@ public class PassengerPanel extends JPanel {
         ridesTableModel.setRowCount(0);
         for (RideRequest r : rideService.getRides()) {
             Rickshaw assigned = r.getRickshawId().isEmpty() ? null : rideService.getRickshaw(r.getRickshawId());
-            String driverInfo = assigned == null ? "Waiting..." : assigned.getId() + " (" + assigned.getDriverName() + ")";
+            String driverInfo;
+            if (assigned != null) {
+                driverInfo = assigned.getId() + " (" + assigned.getDriverName() + ")";
+            } else if (!r.getOfferedRickshawId().isEmpty()) {
+                driverInfo = "Offered -> " + r.getOfferedRickshawId();
+            } else {
+                driverInfo = "Waiting...";
+            }
             ridesTableModel.addRow(new Object[]{
                     r.getId(),
                     r.getPassengerName(),

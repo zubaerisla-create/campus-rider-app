@@ -218,4 +218,31 @@ class RideServiceTest {
         assertEquals("dairy_gate", service.getRickshaw("JU-RICK-103").getLocationId());
         assertEquals(3, service.getRickshaw("JU-RICK-103").getAvailableSeats());
     }
+
+    @Test
+    void passengerAndDriverAccountsPersistAndDriverUpdatesRickshawState() throws Exception {
+        RideService service = TestApp.start(dir);
+
+        // Register a new passenger and login
+        var p = service.registerPassenger("sadia", "pass123", "Sadia Afrin", PassengerType.STUDENT, "01799999999");
+        assertEquals("Sadia Afrin", service.loginPassenger("sadia", "pass123").getFullName());
+
+        // Register a new driver -> creates JU-RICK-106 at cse_building
+        var d = service.registerDriver("bashir", "drv123", "Bashir Mama", "cse_building", "01888888888");
+        assertEquals("JU-RICK-106", d.getRickshawId());
+        assertEquals("Bashir Mama", service.loginDriver("bashir", "drv123").getDriverName());
+
+        // Driver updates rickshaw location, target destination, and available seats
+        service.updateDriverRickshawState("JU-RICK-106", "bottola", "dairy_gate", 2);
+        Rickshaw r106 = service.getRickshaw("JU-RICK-106");
+        assertEquals("bottola", r106.getLocationId());
+        assertEquals("dairy_gate", r106.getTargetDestinationId());
+        assertEquals(2, r106.getAvailableSeats());
+
+        // Restart and verify accounts & rickshaw are restored from CSV
+        RideService restarted = TestApp.start(dir);
+        assertEquals("Sadia Afrin", restarted.loginPassenger("sadia", "pass123").getFullName());
+        assertEquals("Bashir Mama", restarted.loginDriver("bashir", "drv123").getDriverName());
+        assertEquals("bottola", restarted.getRickshaw("JU-RICK-106").getLocationId());
+    }
 }

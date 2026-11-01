@@ -10,6 +10,7 @@ import java.util.Set;
  */
 public class RideRequest {
     private final int id;
+    private String passengerId;
     private final String passengerName;
     private final PassengerType passengerType;
     private final String pickupId;
@@ -17,7 +18,9 @@ public class RideRequest {
     private final double distanceMeters;
     private final int seatsRequested;
     private RideStatus status;
-    private String rickshawId; // empty until the request is matched
+    private String rickshawId;         // assigned rickshaw once accepted/matched
+    private String offeredRickshawId;  // recommended/targeted rickshaw while PENDING
+    private double detourMeters;       // route compatibility detour overhead (for shared rides)
     private final Set<String> rejectedByRickshaws = new LinkedHashSet<>();
 
     public RideRequest(int id, String passengerName, PassengerType passengerType, String pickupId,
@@ -29,6 +32,7 @@ public class RideRequest {
                        String destinationId, double distanceMeters, RideStatus status, String rickshawId,
                        int seatsRequested) {
         this.id = id;
+        this.passengerId = "";
         this.passengerName = passengerName;
         this.passengerType = passengerType;
         this.pickupId = pickupId;
@@ -36,11 +40,21 @@ public class RideRequest {
         this.distanceMeters = distanceMeters;
         this.status = status;
         this.rickshawId = rickshawId == null ? "" : rickshawId;
+        this.offeredRickshawId = "";
+        this.detourMeters = 0.0;
         this.seatsRequested = Math.max(1, Math.min(Rickshaw.DEFAULT_MAX_SEATS, seatsRequested));
     }
 
     public int getId() {
         return id;
+    }
+
+    public String getPassengerId() {
+        return passengerId == null ? "" : passengerId;
+    }
+
+    public void setPassengerId(String passengerId) {
+        this.passengerId = passengerId == null ? "" : passengerId;
     }
 
     public String getPassengerName() {
@@ -77,6 +91,22 @@ public class RideRequest {
 
     public void setRickshawId(String rickshawId) {
         this.rickshawId = rickshawId == null ? "" : rickshawId;
+    }
+
+    public String getOfferedRickshawId() {
+        return offeredRickshawId == null ? "" : offeredRickshawId;
+    }
+
+    public void setOfferedRickshawId(String offeredRickshawId) {
+        this.offeredRickshawId = offeredRickshawId == null ? "" : offeredRickshawId;
+    }
+
+    public double getDetourMeters() {
+        return detourMeters;
+    }
+
+    public void setDetourMeters(double detourMeters) {
+        this.detourMeters = Math.max(0.0, detourMeters);
     }
 
     public void addRejectedBy(String driverRickshawId) {

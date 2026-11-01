@@ -10,6 +10,7 @@ public class Rickshaw {
     private final String id;
     private final String driverName;
     private String locationId;
+    private String targetDestinationId; // optional target destination set by the driver
     private boolean available;
     private final int maxSeats;
     private int occupiedSeats;
@@ -20,13 +21,19 @@ public class Rickshaw {
     private double segmentProgress; // 0.0 to 1.0 along (movingFromId -> movingToId)
 
     public Rickshaw(String id, String driverName, String locationId, boolean available) {
-        this(id, driverName, locationId, available, DEFAULT_MAX_SEATS, available ? 0 : 1);
+        this(id, driverName, locationId, available, DEFAULT_MAX_SEATS, available ? 0 : 1, "");
     }
 
     public Rickshaw(String id, String driverName, String locationId, boolean available, int maxSeats, int occupiedSeats) {
+        this(id, driverName, locationId, available, maxSeats, occupiedSeats, "");
+    }
+
+    public Rickshaw(String id, String driverName, String locationId, boolean available,
+                    int maxSeats, int occupiedSeats, String targetDestinationId) {
         this.id = id;
         this.driverName = driverName;
         this.locationId = locationId;
+        this.targetDestinationId = targetDestinationId == null ? "" : targetDestinationId;
         this.available = available;
         this.maxSeats = Math.max(1, maxSeats);
         this.occupiedSeats = Math.max(0, Math.min(this.maxSeats, occupiedSeats));
@@ -52,6 +59,14 @@ public class Rickshaw {
         this.movingFromId = locationId;
         this.movingToId = locationId;
         this.segmentProgress = 0.0;
+    }
+
+    public String getTargetDestinationId() {
+        return targetDestinationId == null ? "" : targetDestinationId;
+    }
+
+    public void setTargetDestinationId(String targetDestinationId) {
+        this.targetDestinationId = targetDestinationId == null ? "" : targetDestinationId;
     }
 
     public boolean isAvailable() {
@@ -82,6 +97,11 @@ public class Rickshaw {
     public void setOccupiedSeats(int occupiedSeats) {
         this.occupiedSeats = Math.max(0, Math.min(maxSeats, occupiedSeats));
         this.available = (this.occupiedSeats == 0);
+    }
+
+    public void setAvailableSeats(int freeSeats) {
+        int clampedFree = Math.max(0, Math.min(maxSeats, freeSeats));
+        setOccupiedSeats(maxSeats - clampedFree);
     }
 
     public boolean hasSeatsFor(int seats) {

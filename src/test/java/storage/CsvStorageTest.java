@@ -20,12 +20,15 @@ class CsvStorageTest {
     @Test
     void missingFilesAreCreatedFromSampleData() throws Exception {
         RideService service = TestApp.start(dir);
-        for (String file : List.of("locations.csv", "roads.csv", "rickshaws.csv", "rides.csv")) {
+        for (String file : List.of("locations.csv", "roads.csv", "rickshaws.csv", "rides.csv",
+                "passengers.csv", "drivers.csv", "ride_passengers.csv")) {
             assertTrue(Files.exists(dir.resolve(file)), file);
         }
         assertEquals(25, service.getRouteService().getGraph().getLocationCount());
         assertEquals(33, service.getRouteService().getGraph().getRoadCount());
         assertEquals(5, service.getRickshaws().size());
+        assertEquals(4, service.getPassengers().size());
+        assertEquals(5, service.getDrivers().size());
         assertTrue(service.getRides().isEmpty());
     }
 

@@ -1,0 +1,5 @@
+id,username,password,fullName,passengerType,phone
+P-101,tanvir,1234,Tanvir Ahmed,STUDENT,01711000001
+P-102,nila,1234,Nila Rahman,STUDENT,01711000002
+P-103,rafiq,1234,Prof. Rafiqul Islam,STAFF,01711000003
+P-104,emergency,1234,JU Medical Emergency,EMERGENCY,01711000999

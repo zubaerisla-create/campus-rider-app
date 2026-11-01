@@ -1,173 +1,64 @@
-# Smart Campus Ride-Sharing and Route Optimizer
+# Smart Campus Ride-Sharing and Route Optimizer (JU Campus)
 
-A Java Swing desktop application for rickshaw ride-sharing on the Jahangirnagar
-University (JU) campus. It is a Data Structures and Algorithms project: every
-feature in the window is powered by an algorithm that is written out in the
-source code.
+A Java Swing desktop application for Uber-style rickshaw ride-sharing on the Jahangirnagar
+University (JU) campus. Designed as a Data Structures and Algorithms (DSA) project with
+two synchronized side-by-side dashboards (**Passenger Dashboard** and **Driver Dashboard**),
+multi-passenger seat sharing (up to 3 seats), route compatibility evaluation, and simulated
+live GPS tracking — all powered by CSV file storage without requiring any external database.
 
-| Feature in the UI                     | Data structure / algorithm            | Source file                                   |
-|---------------------------------------|---------------------------------------|-----------------------------------------------|
-| Campus road map                       | Weighted graph, adjacency list        | `src/main/java/dsa/CampusGraph.java`          |
-| Find Shortest Route                   | Dijkstra with `PriorityQueue`         | `src/main/java/dsa/Dijkstra.java`             |
-| Search Location (type to search)      | Trie (prefix tree)                    | `src/main/java/dsa/LocationTrie.java`         |
-| Pending Requests Queue, FIFO policy   | Queue (`ArrayDeque`)                  | `src/main/java/dsa/RideQueue.java`            |
-| Pending Requests Queue, PRIORITY      | Min-heap (`PriorityQueue`)            | `src/main/java/dsa/RideQueue.java`            |
-| Match Next Request                    | Nearest available rickshaw (Dijkstra) | `src/main/java/service/RideMatchingService.java` |
-| Start / Complete / Cancel Ride        | State machine                         | `src/main/java/model/RideStatus.java`         |
-| Saving and loading                    | CSV text files                        | `src/main/java/storage/CsvStorage.java`       |
+## 1. DSA Implementation Overview
 
-No database, no web server and no external libraries are used. The only
-dependency is JUnit, and only for the tests.
+| Feature in the Application | Data Structure / Algorithm | Source File |
+|---|---|---|
+| JU Campus Road Map | Weighted Undirected Graph (Adjacency List) | `src/main/java/dsa/CampusGraph.java` |
+| Shortest Route Calculation | Dijkstra's Algorithm with `PriorityQueue` | `src/main/java/dsa/Dijkstra.java` |
+| Location Search (Autocomplete) | Trie (Prefix Tree) | `src/main/java/dsa/LocationTrie.java` |
+| Ride Request Queue (FIFO) | Queue (`ArrayDeque`) | `src/main/java/dsa/RideQueue.java` |
+| Emergency Priority Queue | Min-Heap (`PriorityQueue`) | `src/main/java/dsa/RideQueue.java` |
+| Multi-Passenger Route Compatibility | Dijkstra Detour & Route Overlap Evaluation | `src/main/java/dsa/RouteCompatibility.java` |
+| Greedy Rickshaw Matching & Fallback | Greedy Algorithm + Automatic Reject Fallback | `src/main/java/service/RideMatchingService.java` |
+| Available Rickshaw Sorting | Custom Merge Sort $O(N \log N)$ | `src/main/java/dsa/RickshawSorter.java` |
+| Ride Status Lifecycle | Finite State Machine (`Pending -> Accepted -> Started -> Completed`) | `src/main/java/model/RideStatus.java` |
+| Passenger, Driver & Rickshaw Lookup | `ArrayList` / `HashMap` / `LinkedHashMap` | `src/main/java/service/RideService.java` |
 
-## Requirements
+## 2. Key Features
 
-- Java 17 or newer (JDK)
-- Maven 3.6 or newer
+### Passenger Dashboard (`PassengerWindow` / `PassengerPanel`)
+- **Passenger Registration & Login**: Log in with existing accounts (`tanvir`, `nila`, `rafiq`, `emergency` — password `1234`) or register a new passenger account persisted to `data/passengers.csv`.
+- **Pickup & Destination Selection**: Search campus locations via **Trie Prefix Search** or dropdowns and preview the exact Dijkstra shortest route on the 2D Campus Map.
+- **Find Nearby & Compatible Rickshaws (Sorted via Merge Sort)**: View available rickshaws with free seats (1 to 3 seats), sorted by **Best Route Compatibility (Greedy)**, **Nearest to Pickup (Dijkstra)**, or **Most Available Seats**.
+- **Seat Sharing (1–3 Seats) & Ride Request**: Request 1, 2, or 3 seats and send the request either automatically to the best compatible rickshaw or to a specific selected rickshaw.
+- **Simulated Live GPS Tracking**: Watch the assigned rickshaw move stop-by-stop or smoothly along the campus road network as the driver accepts and drives the route.
 
-## Build, test and run
+### Driver Dashboard (`DriverWindow` / `DriverPanel`)
+- **Driver Registration & Login**: Log in with existing driver accounts (`karim`, `mokbul`, `salam`, `rahim`, `jamal` — password `1234`) or register a new driver & rickshaw persisted to `data/drivers.csv` and `data/rickshaws.csv`.
+- **Rickshaw Status Configuration**: Set the rickshaw's **Current Location**, **Target Destination**, and **Available Seats (0–3)** directly from the dashboard.
+- **Accept / Reject Ride Requests**:
+  - **Accept**: Assigns the passenger to the rickshaw (supporting multi-passenger seat sharing up to 3 seats) and calculates the route detour.
+  - **Reject**: Declines the request for the current driver and **automatically finds and forwards the request to the next most compatible rickshaw** using the Greedy Route Compatibility algorithm.
+- **Simulated Live GPS Movement**: Press **Move Rickshaw (Next Stop)** or **Start Live GPS Auto-Drive** to move the rickshaw along the Dijkstra shortest path while updating the Passenger Window in real time.
 
-Run these from the project folder:
+## 3. CSV File-Based Storage (`data/`)
+
+All application state is persisted in human-readable CSV files inside the `data/` directory:
+
+| File | Columns | Description |
+|---|---|---|
+| `locations.csv` | `id,name,category,rickshawStand,aliases` | 25 JU campus locations and aliases |
+| `roads.csv` | `from,to,distanceMeters,roadName` | 33 two-way campus road segments |
+| `passengers.csv` | `id,username,password,fullName,passengerType,phone` | Registered passenger accounts |
+| `drivers.csv` | `id,username,password,driverName,rickshawId,phone` | Registered driver accounts |
+| `rickshaws.csv` | `id,driverName,locationId,status` | Campus rickshaws and current locations |
+| `rides.csv` | `id,passengerName,passengerType,pickupId,destinationId,distanceMeters,status,rickshawId` | All ride requests and statuses |
+| `ride_passengers.csv` | `rideId,passengerId,passengerName,rickshawId,pickupId,destinationId,seatsBooked,detourMeters,status` | Multi-passenger seat-sharing & detour records |
+
+## 4. Build, Test, and Run
+
+Requirements: **Java 17+** and **Maven 3.6+**.
 
 ```bash
-mvn clean package          # compiles, runs all tests, builds target/campus-ride.jar
+mvn clean package          # compiles, runs all JUnit 5 tests, builds target/campus-ride.jar
 java -jar target/campus-ride.jar
 ```
 
-Other useful commands:
-
-```bash
-mvn test                   # run the tests only
-mvn -DskipTests package    # build the jar without running tests
-java -Dcampusride.dataDir=/path/to/folder -jar target/campus-ride.jar   # use another data folder
-```
-
-On start the console prints the data folder that is being used, for example:
-
-```
-Data folder: /home/user/campus-rider-app/data
-Loaded 25 locations, 33 roads, 5 rickshaws, 0 rides.
-```
-
-## Using the application
-
-**Route Finder tab**
-
-1. Type in *Search Location*. Matching places appear as you type (Trie search).
-   Names, single words ("gate") and short names ("tsc", "cse", "mmh") all work.
-2. Select a match and press *Use as Start* or *Use as Destination*,
-   or choose them directly in the drop-down lists.
-3. Press *Find Shortest Route*. The full route is shown stop by stop with each
-   road's name and length, followed by the total distance.
-
-**Rides and Rickshaws tab**
-
-1. Enter a passenger name, choose the passenger type (STUDENT, STAFF or
-   EMERGENCY), pickup and destination, then press *Create Ride Request*.
-   The request is stored as PENDING and joins the queue.
-2. Choose the *Queue policy*:
-   - FIFO: first come, first served.
-   - PRIORITY: EMERGENCY first, then STAFF, then STUDENT. Requests of the same
-     type are served in the order they were created.
-   The list shows the pending requests in the exact order they will be matched.
-3. Press *Match Next Request*. The first request in the queue gets the nearest
-   available rickshaw (shortest road distance to the pickup). If no rickshaw is
-   free, the request stays first in the queue.
-4. Select a ride in the table and use *Start Ride*, *Complete Ride* or
-   *Cancel Ride*. When a ride is completed, its rickshaw becomes available again
-   at the destination.
-
-Every result or error is shown in the message line at the bottom of each tab.
-
-## Ride lifecycle
-
-```
-PENDING --> MATCHED --> IN_PROGRESS --> COMPLETED
-   |           |
-   +-----------+--> CANCELLED
-```
-
-Any other change (for example completing a PENDING ride, or cancelling a ride
-that is already in progress) is rejected with an error message.
-
-## Data files
-
-All data is kept in the `data/` folder (created next to where you run the
-program):
-
-| File            | Columns                                                                     | Changes at runtime |
-|-----------------|-----------------------------------------------------------------------------|--------------------|
-| `locations.csv` | `id,name,category,rickshawStand,aliases` (aliases separated by `;`)         | no                 |
-| `roads.csv`     | `from,to,distanceMeters,roadName` (every road is two-way)                   | no                 |
-| `rickshaws.csv` | `id,driverName,locationId,status`                                           | yes                |
-| `rides.csv`     | `id,passengerName,passengerType,pickupId,destinationId,distanceMeters,status,rickshawId` | yes   |
-
-How storage works:
-
-- On start all four files are read. A missing file is created from the sample
-  data inside the jar (`src/main/resources/sample/`); a missing `rides.csv`
-  starts with only the header line.
-- After every create, match, start, complete or cancel, `rides.csv` and
-  `rickshaws.csv` are saved immediately.
-- Saving writes to a temporary file and then renames it over the old file, so
-  a crash during saving cannot leave a half-written file.
-- Invalid rows (wrong column count, bad numbers, unknown locations, unknown
-  rickshaw, duplicate id, ...) are skipped and listed in a warning dialog at
-  start. Before anything is overwritten, the original file is copied to
-  `<name>.bak` so no data is lost.
-- If `locations.csv` contains no valid location, the built-in sample campus is
-  used for that session and the file is left untouched.
-- A rickshaw's BUSY or AVAILABLE status is rebuilt from the rides on load
-  (busy means it has a MATCHED or IN_PROGRESS ride), so the two files cannot
-  disagree.
-- Commas in passenger names are replaced with spaces because the comma is the
-  column separator.
-
-To reset all rides, close the program and delete the `data/` folder.
-
-## Project structure
-
-```
-pom.xml
-src/main/java/
-  Main.java                    entry point: loads files, opens the window
-  model/                       plain data classes
-    Location.java  Road.java  Rickshaw.java  RideRequest.java
-    RideStatus.java (lifecycle rules)  PassengerType.java (priorities)
-  dsa/                         the data structures and algorithms
-    CampusGraph.java  Edge.java  Dijkstra.java  RouteResult.java
-    LocationTrie.java  RideQueue.java  QueuePolicy.java
-  service/                     application logic
-    RouteService.java          builds graph + trie, route text for the UI
-    RideMatchingService.java   chooses the nearest available rickshaw
-    RideService.java           create/match/start/complete/cancel + saving
-  storage/
-    CsvStorage.java            reading and writing the CSV files
-  ui/                          Swing user interface
-    MainWindow.java  RoutePanel.java  RidePanel.java  MessageLabel.java
-src/main/resources/sample/     sample campus data (25 places, 33 roads, 5 rickshaws)
-src/test/java/                 JUnit 5 tests
-docs/viva-guide.md             explanation of each algorithm for the viva
-```
-
-## Tests
-
-`mvn test` runs 32 JUnit tests:
-
-| Test class          | What it checks                                                                 |
-|---------------------|---------------------------------------------------------------------------------|
-| `CampusGraphTest`   | two-way roads, neighbour lists, invalid weights and locations are rejected     |
-| `DijkstraTest`      | correct shortest route (not fewest roads), unreachable, same place, bad input  |
-| `LocationTrieTest`  | case-insensitive prefix, word and alias search, no duplicates, empty input     |
-| `RideQueueTest`     | FIFO order, priority order, no duplicate entries, switching policy             |
-| `RideServiceTest`   | matching only free rickshaws, nearest wins, invalid transitions, restart restore |
-| `CsvStorageTest`    | missing files created, malformed rows skipped with backup, empty files         |
-| `PanelTest`         | clicking the real Swing buttons calls the right service methods                |
-
-## Limitations
-
-- The campus map is fixed by `locations.csv` and `roads.csv`; there is no
-  screen for editing places or roads.
-- One rickshaw carries one ride at a time (no seat sharing between ride requests).
-- Distances are road lengths in meters; travel time and fares are not calculated.
-- The application is single-user: two copies running on the same `data/`
-  folder at the same time would overwrite each other's changes.
+On startup, the application opens both the **Main / Passenger Window** and the **Driver Window** side-by-side on your desktop so you can demonstrate the complete Passenger ↔ Driver workflow on a single computer.

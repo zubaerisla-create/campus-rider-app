@@ -1,7 +1,10 @@
 package storage;
 
+import model.DriverAccount;
 import model.Location;
+import model.PassengerAccount;
 import model.PassengerType;
+import model.RidePassengerRecord;
 import model.RideRequest;
 import model.RideStatus;
 import model.Rickshaw;
@@ -21,14 +24,17 @@ import java.util.List;
 /**
  * Reads and writes the application's CSV files in the data folder.
  *
- *   locations.csv  id,name,category,rickshawStand,aliases   (aliases separated by ';')
- *   roads.csv      from,to,distanceMeters,roadName
- *   rickshaws.csv  id,driverName,locationId,status
- *   rides.csv      id,passengerName,passengerType,pickupId,destinationId,distanceMeters,status,rickshawId
+ *   locations.csv       id,name,category,rickshawStand,aliases   (aliases separated by ';')
+ *   roads.csv           from,to,distanceMeters,roadName
+ *   rickshaws.csv       id,driverName,locationId,status
+ *   rides.csv           id,passengerName,passengerType,pickupId,destinationId,distanceMeters,status,rickshawId
+ *   passengers.csv      id,username,password,fullName,passengerType,phone
+ *   drivers.csv         id,username,password,driverName,rickshawId,phone
+ *   ride_passengers.csv rideId,passengerId,passengerName,rickshawId,pickupId,destinationId,seatsBooked,detourMeters,status
  *
  * Rules:
  * - A missing file is created from the sample data bundled in the jar
- *   (rides.csv starts with only the header).
+ *   (rides.csv and ride_passengers.csv start with only the header).
  * - A bad row is skipped and reported in getWarnings(); the original file is
  *   copied to "<name>.bak" so the user's data is never lost.
  * - Saving writes a temporary file first and then renames it, so a crash
@@ -39,10 +45,19 @@ public class CsvStorage {
     public static final String ROADS_FILE = "roads.csv";
     public static final String RICKSHAWS_FILE = "rickshaws.csv";
     public static final String RIDES_FILE = "rides.csv";
+    public static final String PASSENGERS_FILE = "passengers.csv";
+    public static final String DRIVERS_FILE = "drivers.csv";
+    public static final String RIDE_PASSENGERS_FILE = "ride_passengers.csv";
 
     private static final String RICKSHAWS_HEADER = "id,driverName,locationId,status";
     private static final String RIDES_HEADER =
             "id,passengerName,passengerType,pickupId,destinationId,distanceMeters,status,rickshawId";
+    private static final String PASSENGERS_HEADER =
+            "id,username,password,fullName,passengerType,phone";
+    private static final String DRIVERS_HEADER =
+            "id,username,password,driverName,rickshawId,phone";
+    private static final String RIDE_PASSENGERS_HEADER =
+            "rideId,passengerId,passengerName,rickshawId,pickupId,destinationId,seatsBooked,detourMeters,status";
 
     private final Path dataDir;
     private final List<String> warnings = new ArrayList<>();
@@ -89,11 +104,15 @@ public class CsvStorage {
         List<Rickshaw> rickshaws = new ArrayList<>();
         int skipped = 0;
         for (String[] row : rows(readDataFile(RICKSHAWS_FILE))) {
-            if (row.length != 4 || row[0].isEmpty() || row[1].isEmpty() || row[2].isEmpty()) {
+            if (row.length < 4 || row[0].isEmpty() || row[1].isEmpty() || row[2].isEmpty()) {
                 skipped++;
                 continue;
             }
-            rickshaws.add(new Rickshaw(row[0], row[1], row[2], !"BUSY".equalsIgnoreCase(row[3])));
+            boolean available = !"BUSY".equalsIgnoreCase(row[3]);
+            String targetDest = row.length >= 5 ? row[4] : "";
+            Rickshaw r = new Rickshaw(row[0], row[1], row[2], available);
+            r.setTargetDestinationId(targetDest);
+            rickshaws.add(r);
         }
         reportSkipped(RICKSHAWS_FILE, skipped);
         return rickshaws;
@@ -104,23 +123,83 @@ public class CsvStorage {
         int skipped = 0;
         for (String[] row : rows(readDataFile(RIDES_FILE))) {
             try {
-                if (row.length != 8 && row.length != 9) {
+                if (row.length < 8 || row.length > 10) {
                     throw new IllegalArgumentException("wrong number of columns");
                 }
                 int id = Integer.parseInt(row[0]);
                 double distance = Double.parseDouble(row[5]);
-                int seats = row.length == 9 && !row[8].isEmpty() ? Integer.parseInt(row[8]) : 1;
+                int seats = row.length >= 9 && !row[8].isEmpty() ? Integer.parseInt(row[8]) : 1;
                 if (id <= 0 || row[1].isEmpty() || !(distance >= 0) || seats < 1 || seats > Rickshaw.DEFAULT_MAX_SEATS) {
                     throw new IllegalArgumentException("invalid value");
                 }
-                rides.add(new RideRequest(id, row[1], PassengerType.valueOf(row[2]), row[3], row[4],
-                        distance, RideStatus.valueOf(row[6]), row[7], seats));
+                RideRequest req = new RideRequest(id, row[1], PassengerType.valueOf(row[2]), row[3], row[4],
+                        distance, RideStatus.valueOf(row[6]), row[7], seats);
+                if (row.length == 10 && !row[9].isEmpty()) {
+                    req.setOfferedRickshawId(row[9]);
+                }
+                rides.add(req);
             } catch (IllegalArgumentException e) { // also covers NumberFormatException
                 skipped++;
             }
         }
         reportSkipped(RIDES_FILE, skipped);
         return rides;
+    }
+
+    public List<PassengerAccount> loadPassengers() throws IOException {
+        List<PassengerAccount> list = new ArrayList<>();
+        int skipped = 0;
+        for (String[] row : rows(readDataFile(PASSENGERS_FILE))) {
+            try {
+                if (row.length < 5 || row[0].isEmpty() || row[1].isEmpty() || row[2].isEmpty() || row[3].isEmpty()) {
+                    throw new IllegalArgumentException("missing column");
+                }
+                PassengerType type = PassengerType.valueOf(row[4]);
+                String phone = row.length >= 6 ? row[5] : "";
+                list.add(new PassengerAccount(row[0], row[1], row[2], row[3], type, phone));
+            } catch (IllegalArgumentException e) {
+                skipped++;
+            }
+        }
+        reportSkipped(PASSENGERS_FILE, skipped);
+        return list;
+    }
+
+    public List<DriverAccount> loadDrivers() throws IOException {
+        List<DriverAccount> list = new ArrayList<>();
+        int skipped = 0;
+        for (String[] row : rows(readDataFile(DRIVERS_FILE))) {
+            if (row.length < 5 || row[0].isEmpty() || row[1].isEmpty() || row[2].isEmpty()
+                    || row[3].isEmpty() || row[4].isEmpty()) {
+                skipped++;
+                continue;
+            }
+            String phone = row.length >= 6 ? row[5] : "";
+            list.add(new DriverAccount(row[0], row[1], row[2], row[3], row[4], phone));
+        }
+        reportSkipped(DRIVERS_FILE, skipped);
+        return list;
+    }
+
+    public List<RidePassengerRecord> loadRidePassengers() throws IOException {
+        List<RidePassengerRecord> list = new ArrayList<>();
+        int skipped = 0;
+        for (String[] row : rows(readDataFile(RIDE_PASSENGERS_FILE))) {
+            try {
+                if (row.length != 9) {
+                    throw new IllegalArgumentException("wrong column count");
+                }
+                int rideId = Integer.parseInt(row[0]);
+                int seats = Integer.parseInt(row[6]);
+                double detour = Double.parseDouble(row[7]);
+                RideStatus status = RideStatus.valueOf(row[8]);
+                list.add(new RidePassengerRecord(rideId, row[1], row[2], row[3], row[4], row[5], seats, detour, status));
+            } catch (IllegalArgumentException e) {
+                skipped++;
+            }
+        }
+        reportSkipped(RIDE_PASSENGERS_FILE, skipped);
+        return list;
     }
 
     private List<Location> parseLocations(List<String> lines, String source) throws IOException {
@@ -202,7 +281,14 @@ public class CsvStorage {
         Files.createDirectories(dataDir);
         Path file = dataDir.resolve(fileName);
         if (!Files.exists(file)) {
-            List<String> initial = fileName.equals(RIDES_FILE) ? List.of(RIDES_HEADER) : readSample(fileName);
+            List<String> initial;
+            if (fileName.equals(RIDES_FILE)) {
+                initial = List.of(RIDES_HEADER);
+            } else if (fileName.equals(RIDE_PASSENGERS_FILE)) {
+                initial = List.of(RIDE_PASSENGERS_HEADER);
+            } else {
+                initial = readSample(fileName);
+            }
             writeLines(file, initial);
             warnings.add(fileName + " was missing and has been created.");
         }
@@ -248,6 +334,58 @@ public class CsvStorage {
             }
         }
         writeLines(dataDir.resolve(RIDES_FILE), lines);
+    }
+
+    public void savePassengers(List<PassengerAccount> passengers) throws IOException {
+        List<String> lines = new ArrayList<>();
+        lines.add(PASSENGERS_HEADER);
+        for (PassengerAccount p : passengers) {
+            lines.add(String.join(",",
+                    sanitize(p.getId()),
+                    sanitize(p.getUsername()),
+                    sanitize(p.getPassword()),
+                    sanitize(p.getFullName()),
+                    p.getPassengerType().name(),
+                    sanitize(p.getPhone())));
+        }
+        writeLines(dataDir.resolve(PASSENGERS_FILE), lines);
+    }
+
+    public void saveDrivers(List<DriverAccount> drivers) throws IOException {
+        List<String> lines = new ArrayList<>();
+        lines.add(DRIVERS_HEADER);
+        for (DriverAccount d : drivers) {
+            lines.add(String.join(",",
+                    sanitize(d.getId()),
+                    sanitize(d.getUsername()),
+                    sanitize(d.getPassword()),
+                    sanitize(d.getDriverName()),
+                    sanitize(d.getRickshawId()),
+                    sanitize(d.getPhone())));
+        }
+        writeLines(dataDir.resolve(DRIVERS_FILE), lines);
+    }
+
+    public void saveRidePassengers(List<RidePassengerRecord> records) throws IOException {
+        List<String> lines = new ArrayList<>();
+        lines.add(RIDE_PASSENGERS_HEADER);
+        for (RidePassengerRecord rec : records) {
+            lines.add(String.join(",",
+                    String.valueOf(rec.getRideId()),
+                    sanitize(rec.getPassengerId()),
+                    sanitize(rec.getPassengerName()),
+                    sanitize(rec.getRickshawId()),
+                    sanitize(rec.getPickupId()),
+                    sanitize(rec.getDestinationId()),
+                    String.valueOf(rec.getSeatsBooked()),
+                    String.valueOf(rec.getDetourMeters()),
+                    rec.getStatus().name()));
+        }
+        writeLines(dataDir.resolve(RIDE_PASSENGERS_FILE), lines);
+    }
+
+    private static String sanitize(String s) {
+        return s == null ? "" : s.replace(',', ' ').trim();
     }
 
     /** Writes to "<file>.tmp" and then renames it over the real file. */
