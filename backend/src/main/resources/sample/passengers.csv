@@ -1,0 +1,5 @@
+id,username,passwordHash,fullName,passengerType,phone
+P-101,tanvir,$2a$10$B2LlhXFyjFGyGVd7Se1/TuDFVFAtnnhTeKt7CTuKdigjTQGyovtG.,Tanvir Ahmed,STUDENT,01711000001
+P-102,nila,$2a$10$F57Sn5xl8hkt7XjVxQ0SbOCCc9jnA9dzcMq8/cX4gwOdEYG4qpWZm,Nila Rahman,STUDENT,01711000002
+P-103,rafiq,$2a$10$nXx9EgxoK5igN5lY74lSte9opIOIeaeUuT1hF4XNUgHGGx/GgYIqS,Prof. Rafiqul Islam,STAFF,01711000003
+P-104,emergency,$2a$10$3JYFRfqbqjVC2SGKuRDbG.U5ahp8L/YMFjNrkjj/UFDeI8DnKXygi,JU Medical Emergency,EMERGENCY,01711000999

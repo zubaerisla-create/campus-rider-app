@@ -1,0 +1,26 @@
+id,name,category,rickshawStand,aliases,x,y
+dairy_gate,Dairy Gate,GATE,true,dairy;main gate;highway gate,0.38,0.88
+shaheed_minar,Shaheed Minar,LANDMARK,true,minar;monument;shohid minar,0.5,0.65
+central_library,Central Library,ACADEMIC,true,library;kendrio gronthagar,0.62,0.54
+new_arts_building,New Arts Building,ACADEMIC,false,new arts;kola bhaban;art building,0.48,0.54
+social_science_building,Social Science Building,ACADEMIC,false,social science;somaj biggan,0.26,0.66
+zahir_raihan_auditorium,Zahir Raihan Auditorium,LANDMARK,false,auditorium;zahir raihan,0.54,0.76
+central_cafeteria,Central Cafeteria (TSC),FOOD,true,tsc;cafeteria;central cafe,0.36,0.74
+medical_centre,JU Medical Centre,FACILITY,false,medical;hospital;clinic,0.14,0.64
+central_mosque,Central Mosque,FACILITY,false,mosque;masjid,0.12,0.53
+chourangi_mor,Chourangi Mor,JUNCTION,true,chourangi;chourongi,0.54,0.43
+tarasankar_mor,Tarasankar Chottor,JUNCTION,true,tarasankar;tara shankar,0.36,0.38
+bottola,Bottola,FOOD,true,bot tola;bottola;food hub,0.18,0.25
+al_beruni_hall,Al-Beruni Hall,HALL,false,al beruni;beruni hall,0.38,0.24
+old_arts_building,Old Arts Building,ACADEMIC,false,old arts;puratan kola,0.32,0.15
+jahanara_imam_hall,Jahanara Imam Hall,HALL,false,jahanara imam;jahanara,0.74,0.16
+pritilata_hall,Pritilata Hall,HALL,false,pritilata;priti lata,0.76,0.27
+fazilatunnesa_hall,Fazilatunnesa Hall,HALL,false,fazilatunnesa;fazila,0.3,0.3
+bangabandhu_hall,Bangabandhu Hall,HALL,false,bangabandhu;bb hall,0.25,0.42
+salam_barkat_hall,Shaheed Salam-Barkat Hall,HALL,false,salam barkat;salam barkot,0.44,0.34
+rafiq_jabbar_hall,Shaheed Rafiq-Jabbar Hall,HALL,false,rafiq jabbar;rafik jabbar,0.12,0.38
+cse_building,CSE Department (Science Complex),ACADEMIC,true,cse;computer science;science faculty,0.82,0.56
+gymnasium_field,Central Gymnasium & Field,FACILITY,false,gym;gymnasium;field;khelar math,0.72,0.68
+prantik_gate,Prantik Gate,GATE,true,prantik;south gate,0.72,0.9
+mmh_hall,Mir Mosharraf Hossain Hall,HALL,true,mmh;mir mosharraf,0.86,0.84
+bishmile_gate,Bishmile Gate,GATE,true,bishmile;north gate,0.5,0.06

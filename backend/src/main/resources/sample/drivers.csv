@@ -1,0 +1,6 @@
+id,username,passwordHash,driverName,rickshawId,phone
+D-101,karim,$2a$10$iAUm2uY.Dy.mM2c6FC9RoOWLoQCmJ8nl.F0.rf6m6M.Wt74BMpv7.,Abdul Karim Mama,JU-RICK-101,01811000101
+D-102,mokbul,$2a$10$L4cOFTMCv2/3AozYvhS3ZuTW588QArQuU/yr4HtSC9EhDGzvmgwkW,Mokbul Hossain,JU-RICK-102,01811000102
+D-103,salam,$2a$10$s.J6HDFK4VXn5duZaLwIEuq2VAZz8Wx64qhZE6wVEe8pGMtCl8SKW,Salam Mia,JU-RICK-103,01811000103
+D-104,rahim,$2a$10$W2ytiNFhmXa5eKuMjAb.POcddJLzpNP9tL0vls4fNuzOtauBlIz/i,Rahim Uddin,JU-RICK-104,01811000104
+D-105,jamal,$2a$10$0ZNiXqTCbnIcJp227DuNsublKbKIbNgP/AxQFclhNyb.XYamZX3hu,Jamal Sheikh,JU-RICK-105,01811000105

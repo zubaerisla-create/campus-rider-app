@@ -1,0 +1,6 @@
+id,driverName,locationId,status,targetDestinationId,online,blockedSeats,plateNumber,vehicleType
+JU-RICK-101,Abdul Karim Mama,dairy_gate,AVAILABLE,,true,0,DHAKA-SA-11-0101,ELECTRIC
+JU-RICK-102,Mokbul Hossain,bottola,AVAILABLE,,true,0,DHAKA-SA-11-0102,ELECTRIC
+JU-RICK-103,Salam Mia,shaheed_minar,AVAILABLE,,true,0,DHAKA-SA-11-0103,ELECTRIC
+JU-RICK-104,Rahim Uddin,prantik_gate,AVAILABLE,,true,0,DHAKA-SA-11-0104,ELECTRIC
+JU-RICK-105,Jamal Sheikh,mmh_hall,AVAILABLE,,true,0,DHAKA-SA-11-0105,ELECTRIC
