@@ -36,7 +36,7 @@ On first start the backend:
 To build a jar and run the tests:
 ```bash
 cd backend
-mvn clean package            # compiles, runs 60 tests, builds target/campus-rider.jar
+mvn clean package            # compiles, runs 62 tests, builds target/campus-rider.jar
 java -jar target/campus-rider.jar
 ```
 
@@ -89,6 +89,12 @@ backend is not on `http://localhost:8080`.
 ---
 
 ## 3. Features
+
+**Sign up / log in**: one form for both roles. An **Account type** selector (Passenger / Driver)
+decides what is created: passengers go to `passengers.csv`, drivers to `drivers.csv` plus a new
+rickshaw in `rickshaws.csv`. New users land on the matching dashboard (`/ride` or `/drive`).
+Usernames are unique across both account types. Pages: `/register`, `/login`
+(`?type=driver` or the old `/register/driver` and `/login/driver` URLs preselect Driver).
 
 **Passenger**: register and log in, edit profile and password. Pick the pickup and
 destination by search (Trie autocomplete) or by tapping the map. Choose 1–3 seats, see the
@@ -238,7 +244,7 @@ State-changing requests need the CSRF header (see Security).
 ```bash
 cd backend && mvn test
 ```
-60 tests cover:
+62 tests cover:
 - the DSA classes (graph, Dijkstra, Trie, queues, merge sort, greedy, state machine, route compatibility);
 - CSV storage (legacy files, malformed rows, quoting, folder lock);
 - auth and security over HTTP (BCrypt, CSRF, roles, session rotation, rate limit, validation);

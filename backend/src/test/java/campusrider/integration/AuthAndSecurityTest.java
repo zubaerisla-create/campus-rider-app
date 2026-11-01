@@ -114,6 +114,55 @@ class AuthAndSecurityTest {
     }
 
     @Test
+    void usernamesAreUniqueAcrossPassengerAndDriverAccounts() {
+        // Existing passenger name cannot be reused for a driver, and vice versa.
+        assertEquals(409, app.client().post("/api/auth/driver/register",
+                "{\"username\":\"tanvir\",\"password\":\"drive123\",\"driverName\":\"Tanvir Driver\",\"phone\":\"01811999001\","
+                        + "\"startLocationId\":\"bottola\",\"plateNumber\":\"DHAKA-1\"}").status());
+        assertEquals(409, app.client().post("/api/auth/passenger/register",
+                "{\"username\":\"KARIM\",\"password\":\"secret99\",\"fullName\":\"Karim Rider\",\"phone\":\"01911222001\"}").status());
+    }
+
+    @Test
+    void newPassengerAndDriverCanLogInAgainAndOnlyUseTheirOwnRoleFeatures() throws Exception {
+        assertEquals(201, app.client().post("/api/auth/passenger/register",
+                "{\"username\":\"mitu\",\"password\":\"secret99\",\"fullName\":\"Mitu Akter\",\"phone\":\"01911222002\"}").status());
+        assertEquals(201, app.client().post("/api/auth/driver/register",
+                "{\"username\":\"babul\",\"password\":\"drive123\",\"driverName\":\"Babul Mia\",\"phone\":\"01811999002\","
+                        + "\"startLocationId\":\"central_library\",\"plateNumber\":\"DHAKA-SA-12-0002\"}").status());
+
+        // Stored in the role's own CSV file with a BCrypt hash.
+        assertTrue(Files.readString(dir.resolve("passengers.csv")).contains(",mitu,$2a$10$"));
+        assertTrue(Files.readString(dir.resolve("drivers.csv")).contains(",babul,$2a$10$"));
+        assertTrue(Files.readString(dir.resolve("rickshaws.csv")).contains("Babul Mia,central_library"));
+
+        // Logging in with the wrong account type fails; the right one gives the right role.
+        assertEquals(401, app.client().post("/api/auth/login",
+                "{\"role\":\"driver\",\"username\":\"mitu\",\"password\":\"secret99\"}").status());
+        AppHarness.Client mitu = app.login("passenger", "mitu", "secret99");
+        AppHarness.Client babul = app.login("driver", "babul", "drive123");
+        assertEquals("PASSENGER", mitu.get("/api/auth/me").json().get("role").asText());
+        assertEquals("DRIVER", babul.get("/api/auth/me").json().get("role").asText());
+        assertEquals(403, mitu.get("/api/drivers/dashboard").status());
+        assertEquals(403, babul.post("/api/rides/request",
+                "{\"pickupId\":\"central_library\",\"destinationId\":\"cse_building\",\"seats\":1}").status());
+
+        // The new driver goes online and is the only free rickshaw at Central Library:
+        // the new passenger's request is offered to them, they accept, start and manage it.
+        assertEquals(200, babul.put("/api/drivers/availability", "{\"online\":true}").status());
+        AppHarness.Response ride = mitu.post("/api/rides/request", "{\"pickupId\":\"central_library\","
+                + "\"destinationId\":\"cse_building\",\"seats\":1,\"preferredRickshawId\":\""
+                + babul.get("/api/auth/me").json().get("rickshawId").asText() + "\"}");
+        assertEquals(201, ride.status());
+        int id = ride.json().get("id").asInt();
+        assertEquals(1, babul.get("/api/drivers/requests").json().size());
+        assertEquals("ACCEPTED", babul.post("/api/rides/" + id + "/accept").json().get("status").asText());
+        assertEquals(1, babul.get("/api/drivers/dashboard").json().get("activeRides").size());
+        assertEquals("STARTED", babul.post("/api/rides/" + id + "/start").json().get("status").asText());
+        assertEquals("STARTED", mitu.get("/api/passengers/rides/current").json().get("status").asText());
+    }
+
+    @Test
     void rolesAreEnforced() {
         AppHarness.Client anon = app.client();
         assertEquals(401, anon.get("/api/passengers/profile").status());

@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { Eye, EyeOff } from 'lucide-react'
 import AuthCard from './AuthCard'
+import AccountTypePicker, { normalizeType } from './AccountTypePicker'
 import { Button, ErrorBanner, Field, Input } from '../../components/ui'
 import { homeFor, useAuth } from '../../context/AuthContext'
 import { errorMessage } from '../../services/api'
@@ -11,10 +12,12 @@ const DEMO = {
   driver: ['karim', 'mokbul', 'salam', 'rahim', 'jamal'],
 }
 
-export default function Login({ role }) {
+export default function Login({ role: initialRole }) {
   const { user, login } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
+  const [params, setParams] = useSearchParams()
+  const [role, setRole] = useState(normalizeType(initialRole || params.get('type')))
   const [form, setForm] = useState({ username: '', password: '' })
   const [show, setShow] = useState(false)
   const [error, setError] = useState('')
@@ -22,6 +25,12 @@ export default function Login({ role }) {
   const isDriver = role === 'driver'
 
   if (user) return <Navigate to={homeFor(user)} replace />
+
+  const chooseRole = (r) => {
+    setRole(r)
+    setError('')
+    setParams({ type: r }, { replace: true })
+  }
 
   const submit = async (e) => {
     e.preventDefault()
@@ -45,22 +54,21 @@ export default function Login({ role }) {
 
   return (
     <AuthCard
-      title={isDriver ? 'Driver log in' : 'Log in to ride'}
+      title="Welcome back"
       subtitle={isDriver ? 'Go online and start receiving ride requests.' : 'Book a rickshaw anywhere on campus.'}
       footer={
         <>
-          {isDriver ? 'New driver? ' : 'New to Campus Rider? '}
-          <Link to={isDriver ? '/register/driver' : '/register/passenger'} className="font-semibold text-ink hover:underline">
+          New to Campus Rider?{' '}
+          <Link to={`/register?type=${role}`} className="font-semibold text-ink hover:underline">
             Create an account
           </Link>
-          <div className="mt-3">
-            <Link to={isDriver ? '/login/passenger' : '/login/driver'} className="hover:text-ink">
-              {isDriver ? 'Log in as a passenger instead' : 'Are you a driver? Log in here'}
-            </Link>
-          </div>
         </>
       }>
       <form onSubmit={submit} className="space-y-4" noValidate>
+        <div>
+          <span className="label">Account type</span>
+          <AccountTypePicker value={role} onChange={chooseRole} />
+        </div>
         <ErrorBanner>{error}</ErrorBanner>
         <Field label="Username" id="username">
           <Input id="username" autoComplete="username" autoFocus value={form.username}

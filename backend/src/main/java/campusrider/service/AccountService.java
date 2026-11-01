@@ -128,9 +128,7 @@ public class AccountService {
 
     public synchronized AuthUser registerPassenger(PassengerRegisterRequest req) {
         String username = req.username().trim().toLowerCase(Locale.ROOT);
-        if (passengers.usernameExists(username)) {
-            throw new ConflictException("Username '" + username + "' is already taken.");
-        }
+        requireFreeUsername(username);
         PassengerType type = req.passengerType() == null || req.passengerType().isBlank()
                 ? PassengerType.STUDENT : PassengerType.valueOf(req.passengerType().trim().toUpperCase(Locale.ROOT));
         PassengerAccount account = new PassengerAccount(passengers.nextId(), username,
@@ -142,9 +140,7 @@ public class AccountService {
     /** Creates the driver account and their rickshaw (offline until the driver goes online). */
     public synchronized AuthUser registerDriver(DriverRegisterRequest req) {
         String username = req.username().trim().toLowerCase(Locale.ROOT);
-        if (drivers.usernameExists(username)) {
-            throw new ConflictException("Username '" + username + "' is already taken.");
-        }
+        requireFreeUsername(username);
         String start = req.startLocationId().trim();
         if (!routes.isRoutable(start)) {
             throw new BadRequestException("Choose a valid starting stand on campus.");
@@ -159,6 +155,17 @@ public class AccountService {
             drivers.add(account);
             return new AuthUser(AuthUser.Role.DRIVER, account.getId(), username);
         });
+    }
+
+    /**
+     * Usernames are unique across both account types, so one name always means one
+     * account and the role chosen at signup is never ambiguous. Callers hold this
+     * service's lock (synchronized), so check-then-add cannot race.
+     */
+    private void requireFreeUsername(String username) {
+        if (passengers.usernameExists(username) || drivers.usernameExists(username)) {
+            throw new ConflictException("Username '" + username + "' is already taken.");
+        }
     }
 
     // ---------------------------------------------------------------- profiles

@@ -6,8 +6,7 @@ import Landing from '../pages/Landing'
 import About from '../pages/About'
 import NotFound from '../pages/NotFound'
 import Login from '../pages/auth/Login'
-import PassengerRegister from '../pages/auth/PassengerRegister'
-import DriverRegister from '../pages/auth/DriverRegister'
+import Register from '../pages/auth/Register'
 import Book from '../pages/passenger/Book'
 import PassengerHistory from '../pages/passenger/History'
 import PassengerProfile from '../pages/passenger/Profile'
@@ -21,10 +20,11 @@ export default function AppRoutes() {
       <Route element={<PublicLayout />}>
         <Route index element={<Landing />} />
         <Route path="about" element={<About />} />
-        <Route path="login/passenger" element={<Login role="passenger" />} />
-        <Route path="login/driver" element={<Login role="driver" />} />
-        <Route path="register/passenger" element={<PassengerRegister />} />
-        <Route path="register/driver" element={<DriverRegister />} />
+        <Route path="login" element={<Login />} />
+        <Route path="login/passenger" element={<Login key="p" role="passenger" />} />
+        <Route path="login/driver" element={<Login key="d" role="driver" />} />
+        <Route path="register" element={<Register />} />
+        <Route path="register/:type" element={<Register />} />
       </Route>
 
       <Route element={<ProtectedRoute role="PASSENGER" />}>

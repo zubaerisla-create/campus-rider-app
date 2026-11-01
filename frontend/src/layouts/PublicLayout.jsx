@@ -24,8 +24,8 @@ export default function PublicLayout() {
               <Button to={homeFor(user)} size="sm">Open app</Button>
             ) : (
               <>
-                <Button to="/login/passenger" variant="ghost" size="sm">Log in</Button>
-                <Button to="/register/passenger" size="sm">Sign up</Button>
+                <Button to="/login" variant="ghost" size="sm">Log in</Button>
+                <Button to="/register" size="sm">Sign up</Button>
               </>
             )}
           </div>
@@ -43,8 +43,8 @@ export default function PublicLayout() {
                 <Button to={homeFor(user)}>Open app</Button>
               ) : (
                 <div className="grid grid-cols-2 gap-2">
-                  <Button to="/login/passenger" variant="outline">Log in</Button>
-                  <Button to="/register/passenger">Sign up</Button>
+                  <Button to="/login" variant="outline">Log in</Button>
+                  <Button to="/register">Sign up</Button>
                 </div>
               )}
             </div>
