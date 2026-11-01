@@ -1,9 +1,24 @@
 # Build output
 target/
+frontend/dist/
+node_modules/
 
-# Runtime data created by the application (sample data lives in src/main/resources/sample)
+# Runtime CSV data created by the backend (seed data lives in backend/src/main/resources/sample)
 data/
 
-# JVM crash logs
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Crash / debug output
 hs_err_pid*.log
 replay_pid*.log
+core.*
+*.log
+
+# Editors / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store

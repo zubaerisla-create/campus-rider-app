@@ -18,7 +18,7 @@ weight: its length in meters. Roads are two-way, so the graph is
 **Why a graph.** Roads on a campus meet at junctions and form cycles. A list or a
 tree cannot model "many ways to get from A to B"; a graph can.
 
-File: `dsa/CampusGraph.java`
+File: `backend/src/main/java/campusrider/algorithms/CampusGraph.java`
 
 ## 2. Adjacency list
 
@@ -47,7 +47,7 @@ lengths are rejected.
 
 ## 3. Dijkstra's shortest path
 
-File: `dsa/Dijkstra.java`
+File: `backend/src/main/java/campusrider/algorithms/Dijkstra.java`
 
 **Idea.** Keep a "best known distance" for every location. Repeatedly take the
 unvisited location with the smallest distance. Because all road lengths are
@@ -87,7 +87,7 @@ smaller id is polled first, so the same input always produces the same route.
 
 ## 4. Trie (prefix tree)
 
-File: `dsa/LocationTrie.java`
+File: `backend/src/main/java/campusrider/algorithms/LocationTrie.java`
 
 **What it is.** A tree in which each edge is one character. The path from the
 root to a node spells a prefix. Each node keeps its children in a
@@ -113,110 +113,154 @@ prefix, and it is the standard structure for autocomplete.
 Empty or blank input returns no results, and only locations that exist in the
 graph are ever inserted, so search can only return real places.
 
-## 5. Queue (FIFO)
+## 5. Queue (FIFO) for normal requests
 
-File: `dsa/RideQueue.java` (policy FIFO)
+File: `backend/src/main/java/campusrider/algorithms/RideQueue.java`
 
 A queue is First In, First Out: the earliest request is processed first, which
-is fair. It is implemented with `ArrayDeque`: `offer` adds at the back and
+is fair. Normal requests go into an `ArrayDeque`: `offer` adds at the back and
 `poll` removes from the front, both O(1).
 
-## 6. PriorityQueue (binary min-heap)
+## 6. PriorityQueue for emergency requests
 
-File: `dsa/RideQueue.java` (policy PRIORITY)
+Same file. Emergency requests (an EMERGENCY account, or any passenger who
+switches on "Emergency ride") go into a `PriorityQueue`, a binary min-heap
+ordered by:
 
-A `PriorityQueue` is a binary heap: the smallest element by the comparator is
-always at the top. The comparator is:
+1. Priority: emergency = 0, then the passenger type (STAFF before STUDENT).
+2. For the same priority, the smaller request id (the earlier request) first.
 
-1. Passenger type priority: EMERGENCY = 1, STAFF = 2, STUDENT = 3 (smaller first).
-2. For the same type, the smaller request id (the earlier request) first.
+`poll()` always empties the emergency heap before touching the FIFO queue, so
+an emergency is dispatched before every normal request. `offer` and `poll` are
+O(log n). Iterating a `PriorityQueue` is not sorted, so `inProcessingOrder()`
+polls a copy.
 
-Rule 2 makes the order deterministic and keeps fairness within each type.
-`offer` and `poll` are O(log n), `peek` is O(1).
+**Where it is used.** `RideService.dispatch()` drains the queue in this order and
+offers each request to a rickshaw. Seats promised to earlier offers are
+reserved, so when seats are scarce the queue order decides who gets them
+(tested in `RideFlowTest.emergencyRequestIsDispatchedBeforeEarlierNormalRequests`).
 
-Note: iterating over a `PriorityQueue` does not give sorted order. To show the
-queue in the UI, `inProcessingOrder()` polls a copy of it.
+## 7. Route compatibility (shared rides, max 3 seats)
 
-**Same request never matched twice.** `matchNextRequest` removes the request
-from the queue with `poll()` before marking it MATCHED. `add` also refuses a
-request that is already queued. A cancelled request is removed with `remove()`.
+File: `backend/src/main/java/campusrider/algorithms/RouteCompatibility.java`
 
-## 7. Ride matching
+For each rickshaw and a new passenger (pickup P, drop-off D, seats s):
 
-File: `service/RideMatchingService.java`, used by `RideService.matchNextRequest`
+1. **Seats**: free seats (minus seats promised to other offers) must be >= s.
+2. **Pickup**: Dijkstra distance rickshaw -> P must be <= 2500 m.
+3. **Baseline**: the best stop order for the passengers already on board.
+4. **With new**: the best stop order after adding P and D.
+5. **Additional distance** = withNew - baseline; **detour** = the largest delay
+   to any existing passenger's arrival.
+6. **Fairness**: in the chosen order every passenger rides at most 750 m more
+   than their own shortest path, and the new passenger's wait is within range.
+7. Compatible only if every check passes.
 
-1. `peek` the next request (using the active queue policy).
-2. For every rickshaw that is AVAILABLE, run Dijkstra from the rickshaw's
-   location to the pickup.
-3. Choose the smallest distance; if two are equal, the smaller rickshaw id.
-4. If there is a match: `poll` the request, set it to MATCHED, store the
-   rickshaw id, set the rickshaw to BUSY, save both files.
-5. If there is no free rickshaw, the request stays at the front of the queue
-   and an error is shown.
+**Stop order search.** With k passengers there are at most 2k <= 6 stops. A
+depth-first search tries every order in which each pickup comes before its own
+drop-off (at most 6!/2^3 = 90 orders), with branch-and-bound pruning and
+memoised Dijkstra legs. It is exact, and tiny because k <= 3.
 
-A BUSY rickshaw is skipped in step 2, so it can never receive a second active
-ride. Cost: O(R x (V + E) log V) per match.
+The same planner gives the order the driver drives (`RidePlanner`), so the map,
+the detour calculation and the simulated movement always agree.
 
-## 8. Ride lifecycle (state machine)
+## 8. Greedy matching + automatic fallback
 
-File: `model/RideStatus.java`
+Files: `algorithms/GreedyRickshawMatcher.java`, `matching/RideMatchingService.java`
+
+Score (lower is better):
 
 ```
-PENDING -> MATCHED -> IN_PROGRESS -> COMPLETED
-PENDING -> CANCELLED,  MATCHED -> CANCELLED
+score = pickupDistance + 1.5 * detour - 100 * [pickup on current route]
+        + 20 * (freeSeats - seatsNeeded)
 ```
 
-`RideRequest.moveTo` checks `canMoveTo` and throws an exception for any other
-change. The UI catches it and shows the error. COMPLETED and CANCELLED are
-final. Completing a ride frees the rickshaw at the destination; cancelling a
-MATCHED ride frees the rickshaw; cancelling a PENDING ride removes it from the
-queue.
+The request is sent to the lowest score (greedy choice). If that driver rejects,
+or does not answer within 60 s, the driver is added to the request's
+`rejectedBy` set and the next best rickshaw is chosen automatically. When no
+suitable rickshaw remains the request becomes REJECTED. Cost per decision:
+O(R x Dijkstra work).
 
-## 9. Why files instead of a database
+## 9. Custom Merge Sort
 
-- The data is small (25 places, 33 roads, a few rickshaws, the rides) and is
-  used by one person on one computer. A database server would add setup work
-  but no benefit.
-- The focus of the project is data structures. With CSV files all searching,
-  sorting and matching is done by our own Java code, not by SQL queries.
-- CSV files can be opened and checked in any text editor or spreadsheet,
-  which makes debugging and demonstrating easy.
-- Safety measures: write to a temporary file then rename (no half-written
-  files), skip invalid rows instead of crashing, and keep a `.bak` copy of any
-  file that had invalid rows.
+Files: `algorithms/MergeSort.java`, `algorithms/RickshawSorter.java`
 
-Trade-off: files do not support many users writing at the same time, and they
-have no transactions or queries. For a multi-user system a database would be
-the right choice.
+Top-down merge sort, O(N log N) in every case, stable. It sorts the passenger's
+list of available rickshaws by best match, nearest pickup or most seats
+(compatible rickshaws always first), and also ride history and Trie results.
+No `Collections.sort`, `List.sort` or `Arrays.sort` is used.
 
-## 10. Complexity summary
+## 10. Ride lifecycle (state machine)
 
-| Operation                       | Structure          | Time                |
-|---------------------------------|--------------------|---------------------|
-| Add road                        | Adjacency list     | O(1)                |
-| Neighbours of a location        | Adjacency list     | O(degree)           |
-| Shortest route                  | Dijkstra + heap    | O((V + E) log V)    |
-| Insert key into trie            | Trie               | O(L)                |
-| Prefix search                   | Trie               | O(P + N)            |
-| Add / take request (FIFO)       | ArrayDeque         | O(1)                |
-| Add / take request (PRIORITY)   | PriorityQueue      | O(log n)            |
-| Cancel a pending request        | either queue       | O(n)                |
-| Match one request               | Dijkstra per rickshaw | O(R (V + E) log V) |
-| Save rides                      | CSV file           | O(number of rides)  |
+File: `backend/src/main/java/campusrider/algorithms/RideStateMachine.java`
 
-## 11. Likely questions
+```
+PENDING -> ACCEPTED -> STARTED -> COMPLETED
+PENDING -> REJECTED
+PENDING | ACCEPTED -> CANCELLED
+```
 
-- *Why use a PriorityQueue in Dijkstra?* To get the closest unvisited location
-  in O(log V) instead of scanning all V locations each time (O(V^2) overall).
-- *Why can a location appear in the heap several times?* Java's
-  `PriorityQueue` cannot lower the key of an existing entry, so we push a new
-  entry and skip old ones when they are polled (the `visited` check).
-- *How do you show the full route, not just the distance?* The `previous` map
-  stores the predecessor of each location; following it back from the
-  destination and reversing gives the route.
-- *How is the trie case-insensitive?* Keys and search text are both converted
-  to lower case before use.
-- *What happens if two rickshaws are equally close?* The smaller id wins, so
-  results are repeatable.
-- *What if the data file is damaged?* Invalid rows are skipped, the original
-  is copied to `.bak`, and a warning lists what was skipped.
+The transition table is an `EnumMap<RideStatus, EnumSet<RideStatus>>`.
+`RideRequest.moveTo` calls `RideStateMachine.transition`, which throws
+`InvalidStateTransitionException` (HTTP 409) for any other change. Starting a
+ride also requires the rickshaw to be at the pickup; completing requires it to
+be at the destination. Old CSV statuses MATCHED / IN_PROGRESS are read as
+ACCEPTED / STARTED.
+
+## 11. ArrayList and HashMap
+
+Files: `backend/src/main/java/campusrider/repository/*.java`
+
+- `PassengerRepository` / `DriverRepository`: HashMap by id and by username
+  (O(1) login and duplicate checks) plus an ArrayList in file order.
+- `RickshawRepository`: LinkedHashMap by rickshaw id.
+- `RideRepository`: LinkedHashMap ride id -> ride, and a HashMap
+  passengerId -> ArrayList of ride ids (passenger-to-ride mapping for the
+  current ride and history).
+
+## 12. Why CSV files instead of a database
+
+- The data is small (25 places, 33 roads, a few rickshaws, the rides).
+- The project is about data structures: all searching, sorting and matching is
+  done by our own Java code, not by SQL.
+- CSV files open in any editor or spreadsheet, which makes demonstrating easy.
+
+Safety measures in `storage/CsvStorage.java`:
+- RFC 4180 quoting (commas, quotes, line breaks inside values).
+- Atomic writes: write `<file>.tmp`, force it to disk, then rename it.
+- All reads and writes are synchronized, and every ride change happens inside
+  one lock (`RideLock`), so concurrent bookings cannot overbook a rickshaw.
+- An OS file lock stops two servers from using the same data folder.
+- Invalid or duplicate rows are skipped, and the original file is copied to `.bak`.
+
+## 13. Complexity summary
+
+| Operation                       | Structure             | Time                |
+|---------------------------------|-----------------------|---------------------|
+| Neighbours of a location        | Adjacency list        | O(degree)           |
+| Shortest route                  | Dijkstra + heap       | O((V + E) log V)    |
+| Connectivity check (startup)    | BFS                   | O(V + E)            |
+| Prefix search                   | Trie                  | O(P + N)            |
+| Add / take normal request       | ArrayDeque            | O(1)                |
+| Add / take emergency request    | PriorityQueue         | O(log n)            |
+| Compatibility of one rickshaw   | DFS over stop orders  | O(S! S) for S <= 6  |
+| Rank R rickshaws                | Merge sort            | O(R log R)          |
+| Pick the best rickshaw          | Greedy scan           | O(R)                |
+| Status change check             | EnumMap + EnumSet     | O(1)                |
+
+## 14. Likely questions
+
+- *Why a PriorityQueue in Dijkstra?* To take the closest unvisited location in
+  O(log V) instead of scanning all V locations (O(V^2) overall).
+- *Why can a location appear in the heap several times?* Java's PriorityQueue
+  cannot lower a key, so we push a new entry and skip stale ones (`visited`).
+- *Why not just assign any rickshaw with a free seat?* A shared rickshaw going
+  the other way would make everyone late. RouteCompatibility rejects any
+  rickshaw where the plan breaks the detour limits.
+- *What stops two drivers accepting the last seat at once?* Every accept runs
+  inside `RideLock` and re-checks seats and route before changing anything.
+- *Is the tracking real GPS?* No. Rickshaws move along graph edges in a
+  simulation (manual "Move" or automatic drive), and positions are pushed to
+  browsers over a WebSocket.
+- *What if a CSV file is damaged?* Invalid rows are skipped, the original is
+  copied to `.bak`, and the server logs a warning.
